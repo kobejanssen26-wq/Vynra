@@ -1,0 +1,122 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Space Grotesk", "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  --color-bg: #05070a;
+  --color-bg-elevated: #0a0e14;
+  --color-surface: #0e131b;
+  --color-surface-hover: #131922;
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-strong: rgba(255, 255, 255, 0.14);
+
+  --color-ink: #eef4f2;
+  --color-ink-muted: #8b98a5;
+  --color-ink-faint: #56626f;
+
+  --color-neon: #39ffb0;
+  --color-neon-soft: #39ffb033;
+  --color-neon-dim: #23c98a;
+  --color-teal: #2fd9e8;
+
+  --color-warn: #ffc15e;
+  --color-info: #6ea8ff;
+  --color-danger: #ff6b6b;
+
+  --shadow-glow: 0 0 0 1px rgba(57, 255, 176, 0.15), 0 8px 40px -8px rgba(57, 255, 176, 0.25);
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 20px 60px -30px rgba(0, 0, 0, 0.8);
+
+  --animate-pulse-soft: pulse-soft 2.4s ease-in-out infinite;
+  --animate-rise: rise 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+:root[data-theme="light"] {
+  --color-bg: #f4f6f5;
+  --color-bg-elevated: #ffffff;
+  --color-surface: #ffffff;
+  --color-surface-hover: #f0f2f1;
+  --color-border: rgba(10, 20, 15, 0.08);
+  --color-border-strong: rgba(10, 20, 15, 0.14);
+
+  --color-ink: #0b1210;
+  --color-ink-muted: #4c5a54;
+  --color-ink-faint: #8b9691;
+
+  --color-neon-dim: #0fae74;
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.6) inset, 0 16px 40px -24px rgba(10, 30, 20, 0.18);
+}
+
+:root[data-theme="light"] body {
+  background: radial-gradient(120% 120% at 15% -10%, #e9f7f0 0%, var(--color-bg) 45%, #eef1ef 100%) fixed;
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html, body, #root {
+    height: 100%;
+  }
+
+  body {
+    background: radial-gradient(120% 120% at 15% -10%, #0d1c17 0%, var(--color-bg) 45%, #05070a 100%) fixed;
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    overscroll-behavior: none;
+  }
+
+  ::selection {
+    background: var(--color-neon-soft);
+    color: var(--color-ink);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+
+  input, select, textarea {
+    background: transparent;
+    color: inherit;
+  }
+
+  input::placeholder, textarea::placeholder {
+    color: var(--color-ink-faint);
+  }
+}
+
+@layer components {
+  .glass-card {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.01));
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--color-border);
+    box-shadow: var(--shadow-card);
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+}
