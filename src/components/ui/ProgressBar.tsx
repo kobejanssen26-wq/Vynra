@@ -4,22 +4,26 @@ type Props = {
   value: number; // 0-100
   color?: string;
   height?: number;
-  trackClassName?: string;
+  animateOnMount?: boolean;
 };
 
-export default function ProgressBar({ value, color = 'var(--color-neon)', height = 8, trackClassName = '' }: Props) {
+export default function ProgressBar({ value, color = 'var(--color-neon)', height = 8, animateOnMount = true }: Props) {
   const clamped = Math.max(0, Math.min(100, value));
   return (
     <div
-      className={`relative w-full overflow-hidden rounded-full bg-white/[0.06] ${trackClassName}`}
+      role="progressbar"
+      aria-valuenow={Math.round(clamped)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      className="relative w-full overflow-hidden rounded-full bg-[color:var(--color-track)]"
       style={{ height }}
     >
       <motion.div
         className="h-full rounded-full"
-        style={{ background: `linear-gradient(90deg, ${color}, color-mix(in srgb, ${color} 60%, #2FD9E8))` }}
-        initial={{ width: 0 }}
+        style={{ background: `linear-gradient(90deg, color-mix(in srgb, ${color} 75%, var(--color-teal)), ${color})`, boxShadow: `0 0 12px -2px ${color}` }}
+        initial={animateOnMount ? { width: 0 } : false}
         animate={{ width: `${clamped}%` }}
-        transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
+        transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
       />
     </div>
   );

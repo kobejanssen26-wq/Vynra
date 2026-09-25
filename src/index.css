@@ -8,6 +8,10 @@
   --color-bg-elevated: #0a0e14;
   --color-surface: #0e131b;
   --color-surface-hover: #131922;
+  --color-surface-raised: #1a212c;
+  --color-fill: rgba(255, 255, 255, 0.03);
+  --color-fill-hover: rgba(255, 255, 255, 0.06);
+  --color-track: rgba(255, 255, 255, 0.07);
   --color-border: rgba(255, 255, 255, 0.08);
   --color-border-strong: rgba(255, 255, 255, 0.14);
 
@@ -36,8 +40,14 @@
   --color-bg-elevated: #ffffff;
   --color-surface: #ffffff;
   --color-surface-hover: #f0f2f1;
-  --color-border: rgba(10, 20, 15, 0.08);
-  --color-border-strong: rgba(10, 20, 15, 0.14);
+  --color-surface-raised: #ffffff;
+  --color-fill: rgba(10, 30, 20, 0.035);
+  --color-fill-hover: rgba(10, 30, 20, 0.07);
+  --color-track: rgba(10, 30, 20, 0.08);
+  --color-border: rgba(10, 20, 15, 0.09);
+  --color-border-strong: rgba(10, 20, 15, 0.16);
+  --color-neon: #0fae74;
+  --color-teal: #0e9fae;
 
   --color-ink: #0b1210;
   --color-ink-muted: #4c5a54;
@@ -56,6 +66,11 @@
   50% { opacity: 0.55; }
 }
 
+@keyframes ring-out {
+  from { opacity: 0.55; transform: scale(0.9); }
+  to { opacity: 0; transform: scale(1.35); }
+}
+
 @keyframes rise {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
@@ -66,8 +81,12 @@
     border-color: var(--color-border);
   }
 
-  html, body, #root {
-    height: 100%;
+  html {
+    background-color: var(--color-bg);
+  }
+
+  body, #root {
+    min-height: 100%;
   }
 
   body {
@@ -115,8 +134,42 @@
     box-shadow: var(--shadow-card);
   }
 
+  :root[data-theme="light"] .glass-card {
+    background: rgba(255, 255, 255, 0.78);
+  }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .num {
+    font-family: var(--font-display);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+
   .tabular {
     font-variant-numeric: tabular-nums;
     font-feature-settings: "tnum";
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.7);
+  cursor: pointer;
+}
+:root[data-theme="light"] input[type="date"]::-webkit-calendar-picker-indicator,
+:root[data-theme="light"] input[type="time"]::-webkit-calendar-picker-indicator {
+  filter: none;
 }

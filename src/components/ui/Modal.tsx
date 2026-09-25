@@ -51,7 +51,7 @@ export default function Modal({ open, onClose, title, subtitle, children, width 
               </div>
               <button
                 onClick={onClose}
-                className="rounded-full p-1.5 text-[color:var(--color-ink-faint)] hover:bg-white/[0.06] hover:text-[color:var(--color-ink)] transition-colors"
+                className="rounded-full p-1.5 text-[color:var(--color-ink-faint)] hover:bg-[color:var(--color-fill-hover)] hover:text-[color:var(--color-ink)] transition-colors"
               >
                 <X size={18} />
               </button>

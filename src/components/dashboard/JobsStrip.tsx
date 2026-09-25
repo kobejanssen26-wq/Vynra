@@ -2,39 +2,42 @@ import { Link } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 import { formatCurrency } from '../../lib/calc';
+import { visibleJobs } from '../../lib/stats';
 
 export default function JobsStrip() {
-  const jobs = useStore((s) => s.jobs);
-  const settings = useStore((s) => s.settings);
+  const jobs = visibleJobs(useStore((s) => s.jobs));
+  const symbol = useStore((s) => s.settings.currencySymbol);
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-3">
+    <section>
+      <div className="mb-3 flex items-center justify-between">
         <h3 className="text-sm font-semibold text-[color:var(--color-ink)]">Mijn jobs</h3>
-        <Link to="/jobs" className="text-xs font-medium text-[color:var(--color-neon)] hover:underline">
-          Alles bekijken
+        <Link to="/jobs" className="text-xs font-medium text-[color:var(--color-ink-muted)] hover:text-[color:var(--color-neon)]">
+          Beheren
         </Link>
       </div>
-      <div className="flex gap-3 overflow-x-auto pb-1 -mx-1 px-1">
+      <div className="-mx-1 flex gap-3 overflow-x-auto px-1 pb-1 no-scrollbar">
         {jobs.map((job) => (
           <Link
             key={job.id}
             to="/jobs"
-            className="flex min-w-[150px] shrink-0 flex-col gap-2 rounded-2xl border border-[color:var(--color-border)] bg-white/[0.02] px-4 py-3.5 hover:bg-white/[0.05] hover:border-[color:var(--color-border-strong)] transition-colors"
+            className="flex min-w-[152px] shrink-0 flex-col gap-2 rounded-2xl border border-[color:var(--color-border)] bg-[color:var(--color-fill)] px-4 py-3.5 transition-colors hover:border-[color:var(--color-border-strong)] hover:bg-[color:var(--color-fill-hover)]"
           >
-            <span className="text-xl">{job.icon}</span>
-            <span className="text-sm font-medium text-[color:var(--color-ink)] truncate">{job.name}</span>
-            <span className="text-xs text-[color:var(--color-neon)]">{formatCurrency(job.baseRate, settings.currencySymbol)} / uur</span>
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl text-lg" style={{ background: `${job.color}24` }}>
+              {job.icon}
+            </span>
+            <span className="truncate text-sm font-medium text-[color:var(--color-ink)]">{job.name}</span>
+            <span className="num text-xs text-[color:var(--color-ink-muted)]">{formatCurrency(job.baseRate, symbol)} / uur</span>
           </Link>
         ))}
         <Link
-          to="/jobs"
-          className="flex min-w-[150px] shrink-0 flex-col items-center justify-center gap-1.5 rounded-2xl border border-dashed border-[color:var(--color-border-strong)] px-4 py-3.5 text-[color:var(--color-ink-faint)] hover:text-[color:var(--color-ink-muted)] hover:border-[color:var(--color-neon)]/40 transition-colors"
+          to="/jobs?nieuw=1"
+          className="flex min-w-[152px] shrink-0 flex-col items-center justify-center gap-1.5 rounded-2xl border border-dashed border-[color:var(--color-border-strong)] px-4 py-3.5 text-[color:var(--color-ink-muted)] transition-colors hover:border-[color:var(--color-neon)]/40 hover:text-[color:var(--color-ink)]"
         >
           <Plus size={18} />
           <span className="text-xs font-medium">Nieuwe job</span>
         </Link>
       </div>
-    </div>
+    </section>
   );
 }

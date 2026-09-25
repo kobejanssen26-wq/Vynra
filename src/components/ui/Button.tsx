@@ -7,10 +7,10 @@ const variantClasses: Record<Variant, string> = {
   primary:
     'bg-[color:var(--color-neon)] text-[#04140d] font-semibold shadow-[0_0_0_1px_rgba(57,255,176,0.4),0_8px_30px_-8px_rgba(57,255,176,0.55)] hover:brightness-110 active:brightness-95',
   secondary:
-    'bg-white/[0.06] text-[color:var(--color-ink)] border border-[color:var(--color-border-strong)] hover:bg-white/[0.1]',
+    'bg-[color:var(--color-fill-hover)] text-[color:var(--color-ink)] border border-[color:var(--color-border-strong)] hover:bg-[color:var(--color-fill-hover)]',
   outline:
-    'bg-transparent text-[color:var(--color-ink)] border border-[color:var(--color-border-strong)] hover:bg-white/[0.05]',
-  ghost: 'bg-transparent text-[color:var(--color-ink-muted)] hover:text-[color:var(--color-ink)] hover:bg-white/[0.05]',
+    'bg-transparent text-[color:var(--color-ink)] border border-[color:var(--color-border-strong)] hover:bg-[color:var(--color-fill-hover)]',
+  ghost: 'bg-transparent text-[color:var(--color-ink-muted)] hover:text-[color:var(--color-ink)] hover:bg-[color:var(--color-fill-hover)]',
   danger: 'bg-[color:var(--color-danger)]/15 text-[color:var(--color-danger)] border border-[color:var(--color-danger)]/30 hover:bg-[color:var(--color-danger)]/25',
 };
 

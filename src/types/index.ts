@@ -11,19 +11,22 @@ export type Job = {
   baseRate: number; // per hour
   color: string; // accent hex for charts
   rateRules: RateRule[];
-  archived?: boolean;
+  archived?: boolean; // deleted by the user but kept so past sessions keep their job
 };
+
+export type SessionKind = 'worked' | 'planned' | 'manual';
 
 export type Session = {
   id: string;
   jobId: string;
   rateId: string | null; // null = base rate, else RateRule id
+  rate?: number; // hourly rate snapshot at the time the session was saved
   date: string; // YYYY-MM-DD (local date of session start)
-  startTime: string; // HH:mm
-  endTime: string; // HH:mm, undefined-safe: '' means still running (only for active session, not stored)
-  breakMinutes: number;
+  startTime: string; // HH:mm or HH:mm:ss
+  endTime: string; // HH:mm or HH:mm:ss
+  breakMinutes: number; // may be fractional for live sessions
   note?: string;
-  kind: 'worked' | 'planned' | 'manual';
+  kind: SessionKind;
   createdAt: number;
   updatedAt: number;
 };
@@ -31,7 +34,7 @@ export type Session = {
 export type ActiveSession = {
   jobId: string;
   rateId: string | null;
-  sessionStart: number; // epoch ms, fixed at the moment Start was pressed
+  sessionStart: number; // epoch ms of the (possibly corrected) start
   segmentStart: number; // epoch ms, reset every time the session (re)starts running
   accumulatedMs: number; // worked ms accumulated from completed running segments
   isPaused: boolean;
@@ -49,16 +52,20 @@ export type Goal = {
   createdAt: number;
 };
 
+export type Rounding = 'none' | 'min1' | 'min5' | 'min15';
+
 export type Settings = {
   currency: string;
   currencySymbol: string;
   defaultRate: number;
-  rounding: 'none' | 'nearest5' | 'nearest15';
+  rounding: Rounding;
   weekStart: 'monday' | 'sunday';
   timezone: string;
   notifications: boolean;
   theme: 'dark' | 'light';
   language: 'nl' | 'en';
   showMilestone: boolean;
+  milestoneStep: number;
+  profileName: string;
   onboarded: boolean;
 };

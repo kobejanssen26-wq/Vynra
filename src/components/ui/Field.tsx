@@ -17,7 +17,7 @@ export function FieldWrap({ label, children, hint }: FieldWrapProps) {
 }
 
 const inputBase =
-  'w-full rounded-xl border border-[color:var(--color-border-strong)] bg-white/[0.03] px-3.5 py-2.5 text-sm text-[color:var(--color-ink)] outline-none transition-colors focus:border-[color:var(--color-neon)]/60 focus:bg-white/[0.05]';
+  'w-full rounded-xl border border-[color:var(--color-border-strong)] bg-[color:var(--color-fill)] px-3.5 py-2.5 text-sm text-[color:var(--color-ink)] outline-none transition-colors focus:border-[color:var(--color-neon)]/60 focus:bg-[color:var(--color-fill-hover)]';
 
 export function TextInput(props: InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} className={`${inputBase} ${props.className ?? ''}`} />;

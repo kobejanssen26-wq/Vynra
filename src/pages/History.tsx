@@ -1,44 +1,37 @@
 import { useMemo, useState } from 'react';
-import { History as HistoryIcon, Pencil } from 'lucide-react';
+import { History as HistoryIcon, Plus, SearchX } from 'lucide-react';
 import { useStore } from '../store/useStore';
+import { useUI } from '../store/useUI';
 import type { Session } from '../types';
-import {
-  formatCurrency,
-  formatDayHeading,
-  formatDurationLong,
-  sessionEarnings,
-  sessionMinutes,
-  todayISO,
-} from '../lib/calc';
-import { currentMonthRange, currentWeekRange } from '../lib/stats';
+import { formatCurrency, formatDurationLong, relativeDayLabel, todayISO } from '../lib/calc';
+import { currentMonthRange, currentWeekRange, plannedSessions, totalEarnings, totalMinutes, workedSessions } from '../lib/stats';
 import FilterSelect from '../components/ui/FilterSelect';
 import EmptyState from '../components/ui/EmptyState';
-import SessionModal from '../components/SessionModal';
+import Button from '../components/ui/Button';
+import SessionRow from '../components/SessionRow';
+import { TextInput } from '../components/ui/Field';
 
-type DateFilter = 'all' | 'week' | 'month';
-type KindFilter = 'all' | 'worked' | 'manual' | 'planned';
+type DateFilter = 'all' | 'week' | 'month' | 'date';
+type KindFilter = 'all' | Session['kind'];
 
-const KIND_LABEL: Record<Session['kind'], string> = {
-  worked: 'Gewerkt',
-  manual: 'Handmatig',
-  planned: 'Gepland',
-};
-
-const KIND_COLOR: Record<Session['kind'], string> = {
-  worked: 'var(--color-neon)',
-  manual: 'var(--color-warn)',
-  planned: 'var(--color-info)',
-};
+const KIND_FILTERS: { value: KindFilter; label: string }[] = [
+  { value: 'all', label: 'Alles' },
+  { value: 'worked', label: 'Gewerkt' },
+  { value: 'manual', label: 'Handmatig toegevoegd' },
+  { value: 'planned', label: 'Gepland' },
+];
 
 export default function HistoryPage() {
   const sessions = useStore((s) => s.sessions);
   const jobs = useStore((s) => s.jobs);
   const settings = useStore((s) => s.settings);
+  const openSession = useUI((s) => s.openSession);
+  const sym = settings.currencySymbol;
 
   const [jobFilter, setJobFilter] = useState('all');
   const [dateFilter, setDateFilter] = useState<DateFilter>('all');
+  const [pickedDate, setPickedDate] = useState(todayISO());
   const [kindFilter, setKindFilter] = useState<KindFilter>('all');
-  const [editSession, setEditSession] = useState<Session | null>(null);
 
   const filtered = useMemo(() => {
     let list = sessions.slice();
@@ -50,120 +43,146 @@ export default function HistoryPage() {
     } else if (dateFilter === 'month') {
       const { from, to } = currentMonthRange();
       list = list.filter((s) => s.date >= from && s.date <= to);
+    } else if (dateFilter === 'date') {
+      list = list.filter((s) => s.date === pickedDate);
     }
-    return list.sort((a, b) => (a.date + a.startTime < b.date + b.startTime ? 1 : -1));
-  }, [sessions, jobFilter, kindFilter, dateFilter, settings.weekStart]);
+    return list.sort((a, b) => (b.date + b.startTime).localeCompare(a.date + a.startTime));
+  }, [sessions, jobFilter, kindFilter, dateFilter, pickedDate, settings.weekStart]);
 
   const groups = useMemo(() => {
     const map = new Map<string, Session[]>();
-    for (const s of filtered) {
-      const arr = map.get(s.date) ?? [];
-      arr.push(s);
-      map.set(s.date, arr);
-    }
+    for (const s of filtered) map.set(s.date, [...(map.get(s.date) ?? []), s]);
     return Array.from(map.entries());
   }, [filtered]);
 
-  const today = todayISO();
-  const yesterday = useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    return d.toISOString().slice(0, 10);
-  }, []);
+  const worked = workedSessions(filtered);
+  const planned = plannedSessions(filtered);
+  const filtersActive = jobFilter !== 'all' || dateFilter !== 'all' || kindFilter !== 'all';
 
-  function dateLabel(date: string) {
-    if (date === today) return 'Vandaag';
-    if (date === yesterday) return 'Gisteren';
-    return formatDayHeading(date);
+  function resetFilters() {
+    setJobFilter('all');
+    setDateFilter('all');
+    setKindFilter('all');
   }
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="lg:hidden text-2xl font-bold text-[color:var(--color-ink)]">Geschiedenis</h1>
-        <p className="text-sm text-[color:var(--color-ink-muted)]">Al je sessies, overzichtelijk per dag.</p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-[color:var(--color-ink)] lg:hidden" style={{ fontFamily: 'var(--font-display)' }}>
+            Geschiedenis
+          </h1>
+          <p className="text-sm text-[color:var(--color-ink-muted)]">Al je sessies, per dag. Tik op een sessie om die aan te passen.</p>
+        </div>
+        <Button size="sm" icon={<Plus size={14} />} onClick={() => openSession({ defaultDate: todayISO() })}>
+          Handmatig een sessie toevoegen
+        </Button>
       </div>
 
-      <div className="flex flex-wrap gap-2.5">
-        <FilterSelect value={jobFilter} onChange={(e) => setJobFilter(e.target.value)}>
-          <option value="all">Alle jobs</option>
-          {jobs.map((j) => (
-            <option key={j.id} value={j.id}>
-              {j.icon} {j.name}
-            </option>
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <FilterSelect value={jobFilter} onChange={(e) => setJobFilter(e.target.value)} aria-label="Job">
+            <option value="all">Alle jobs</option>
+            {jobs.map((j) => (
+              <option key={j.id} value={j.id}>
+                {j.icon} {j.name}
+                {j.archived ? ' (verwijderd)' : ''}
+              </option>
+            ))}
+          </FilterSelect>
+          <FilterSelect value={dateFilter} onChange={(e) => setDateFilter(e.target.value as DateFilter)} aria-label="Periode">
+            <option value="all">Alle datums</option>
+            <option value="week">Deze week</option>
+            <option value="month">Deze maand</option>
+            <option value="date">Datum…</option>
+          </FilterSelect>
+          {dateFilter === 'date' && <TextInput type="date" value={pickedDate} onChange={(e) => setPickedDate(e.target.value)} className="!w-auto !py-2" aria-label="Datum" />}
+        </div>
+        <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 no-scrollbar">
+          {KIND_FILTERS.map((k) => (
+            <button
+              key={k.value}
+              onClick={() => setKindFilter(k.value)}
+              aria-pressed={kindFilter === k.value}
+              className={`shrink-0 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors ${
+                kindFilter === k.value
+                  ? 'border-[color:var(--color-neon)]/50 bg-[color:var(--color-neon)]/10 text-[color:var(--color-ink)]'
+                  : 'border-[color:var(--color-border)] text-[color:var(--color-ink-muted)] hover:text-[color:var(--color-ink)]'
+              }`}
+            >
+              {k.label}
+            </button>
           ))}
-        </FilterSelect>
-        <FilterSelect value={dateFilter} onChange={(e) => setDateFilter(e.target.value as DateFilter)}>
-          <option value="all">Alle datums</option>
-          <option value="week">Deze week</option>
-          <option value="month">Deze maand</option>
-        </FilterSelect>
-        <FilterSelect value={kindFilter} onChange={(e) => setKindFilter(e.target.value as KindFilter)}>
-          <option value="all">Gewerkt & gepland</option>
-          <option value="worked">Gewerkt</option>
-          <option value="manual">Handmatig toegevoegd</option>
-          <option value="planned">Gepland</option>
-        </FilterSelect>
+        </div>
       </div>
 
-      {groups.length === 0 ? (
+      {filtered.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl border border-[color:var(--color-border)] bg-[color:var(--color-fill)] px-4 py-3 text-sm">
+          <span className="text-[color:var(--color-ink-muted)]">
+            <span className="num font-semibold text-[color:var(--color-ink)]">{worked.length}</span> sessies
+          </span>
+          <span className="text-[color:var(--color-ink-muted)]">
+            <span className="num font-semibold text-[color:var(--color-ink)]">{formatDurationLong(totalMinutes(worked))}</span> gewerkt
+          </span>
+          <span className="text-[color:var(--color-ink-muted)]">
+            <span className="num font-semibold text-[color:var(--color-neon)]">{formatCurrency(totalEarnings(worked, jobs), sym)}</span> verdiend
+          </span>
+          {planned.length > 0 && (
+            <span className="text-[color:var(--color-ink-muted)]">
+              <span className="num font-semibold text-[color:var(--color-info)]">{formatCurrency(totalEarnings(planned, jobs), sym)}</span> verwacht
+            </span>
+          )}
+        </div>
+      )}
+
+      {sessions.length === 0 ? (
         <EmptyState
           icon={<HistoryIcon size={22} />}
           title="Nog geen werkuren geregistreerd."
-          description="Zodra je een sessie start en stopt, verschijnt die hier terug."
+          description="Zodra je een sessie start en stopt, verschijnt die hier."
+          action={
+            <Button variant="secondary" icon={<Plus size={15} />} onClick={() => openSession({ defaultDate: todayISO() })}>
+              Handmatig een sessie toevoegen
+            </Button>
+          }
+        />
+      ) : groups.length === 0 ? (
+        <EmptyState
+          icon={<SearchX size={22} />}
+          title="Geen sessies gevonden"
+          description="Er zijn geen sessies die bij deze filters passen."
+          action={
+            filtersActive ? (
+              <Button variant="secondary" onClick={resetFilters}>
+                Filters wissen
+              </Button>
+            ) : undefined
+          }
         />
       ) : (
-        <div className="space-y-6">
+        <div className="space-y-7">
           {groups.map(([date, list]) => {
-            const sorted = list.slice().sort((a, b) => b.startTime.localeCompare(a.startTime));
+            const dayWorked = workedSessions(list);
             return (
-              <div key={date}>
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-[color:var(--color-ink-faint)] mb-2.5">
-                  {dateLabel(date)}
-                </h3>
-                <div className="space-y-2">
-                  {sorted.map((s) => {
-                    const job = jobs.find((j) => j.id === s.jobId);
-                    const amount = sessionEarnings(s, job);
-                    const minutes = sessionMinutes(s);
-                    return (
-                      <button
-                        key={s.id}
-                        onClick={() => setEditSession(s)}
-                        className="w-full flex items-center gap-3.5 rounded-2xl glass-card px-4 py-3.5 text-left hover:bg-white/[0.04] transition-colors group"
-                      >
-                        <span className="text-xl shrink-0">{job?.icon}</span>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <p className="text-sm font-medium text-[color:var(--color-ink)] truncate">{job?.name}</p>
-                            <span
-                              className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium"
-                              style={{ background: `${KIND_COLOR[s.kind]}1a`, color: KIND_COLOR[s.kind] }}
-                            >
-                              {KIND_LABEL[s.kind]}
-                            </span>
-                          </div>
-                          <p className="text-xs text-[color:var(--color-ink-faint)] mt-0.5">
-                            {s.startTime} – {s.endTime} · {formatDurationLong(minutes)}
-                          </p>
-                        </div>
-                        <div className="text-right shrink-0">
-                          <p className={`text-sm font-semibold ${s.kind === 'planned' ? 'text-[color:var(--color-info)]' : 'text-[color:var(--color-neon)]'}`}>
-                            {formatCurrency(amount, settings.currencySymbol)}
-                          </p>
-                        </div>
-                        <Pencil size={13} className="text-[color:var(--color-ink-faint)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
-                      </button>
-                    );
-                  })}
+              <section key={date}>
+                <div className="mb-2.5 flex items-baseline justify-between px-1">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-[color:var(--color-ink-faint)]">{relativeDayLabel(date)}</h3>
+                  {dayWorked.length > 0 && (
+                    <span className="num text-xs text-[color:var(--color-ink-muted)]">
+                      {formatDurationLong(totalMinutes(dayWorked))} · {formatCurrency(totalEarnings(dayWorked, jobs), sym)}
+                    </span>
+                  )}
                 </div>
-              </div>
+                <div className="space-y-2">
+                  {list.map((s) => (
+                    <SessionRow key={s.id} session={s} job={jobs.find((j) => j.id === s.jobId)} symbol={sym} onClick={() => openSession({ editSession: s })} />
+                  ))}
+                </div>
+              </section>
             );
           })}
         </div>
       )}
-
-      <SessionModal open={!!editSession} onClose={() => setEditSession(null)} editSession={editSession} />
     </div>
   );
 }

@@ -1,3 +1,5 @@
+import { useId } from 'react';
+
 type LogoProps = {
   size?: number;
   withWordmark?: boolean;
@@ -10,18 +12,23 @@ type LogoProps = {
  * asymmetric neon strokes. Reused everywhere at any size — never redrawn.
  */
 export function LogoMark({ size = 32 }: { size?: number }) {
+  // Unique gradient ids per instance: a hidden copy (e.g. the desktop sidebar on mobile) must not own the only definition.
+  const uid = useId().replace(/:/g, '');
+  const a = `vynra-a-${uid}`;
+  const b = `vynra-b-${uid}`;
+  const glow = `vynra-glow-${uid}`;
   return (
     <svg width={size} height={size} viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
       <defs>
-        <linearGradient id="vynra-mark-a" x1="4" y1="6" x2="24" y2="42" gradientUnits="userSpaceOnUse">
+        <linearGradient id={a} x1="4" y1="6" x2="24" y2="42" gradientUnits="userSpaceOnUse">
           <stop offset="0%" stopColor="#39FFB0" />
           <stop offset="100%" stopColor="#12A87A" />
         </linearGradient>
-        <linearGradient id="vynra-mark-b" x1="44" y1="6" x2="24" y2="42" gradientUnits="userSpaceOnUse">
+        <linearGradient id={b} x1="44" y1="6" x2="24" y2="42" gradientUnits="userSpaceOnUse">
           <stop offset="0%" stopColor="#7CFFD1" />
           <stop offset="100%" stopColor="#2FD9E8" />
         </linearGradient>
-        <filter id="vynra-glow" x="-50%" y="-50%" width="200%" height="200%">
+        <filter id={glow} x="-50%" y="-50%" width="200%" height="200%">
           <feGaussianBlur stdDeviation="1.6" result="blur" />
           <feMerge>
             <feMergeNode in="blur" />
@@ -30,17 +37,17 @@ export function LogoMark({ size = 32 }: { size?: number }) {
         </filter>
       </defs>
       <rect x="0.5" y="0.5" width="47" height="47" rx="13.5" fill="#0A0E14" stroke="rgba(255,255,255,0.06)" />
-      <g filter="url(#vynra-glow)">
+      <g filter={`url(#${glow})`}>
         <path
           d="M9 11 C13 11 15.5 13 17 17 L23.2 33.5"
-          stroke="url(#vynra-mark-a)"
+          stroke={`url(#${a})`}
           strokeWidth="4.4"
           strokeLinecap="round"
           fill="none"
         />
         <path
           d="M39 11 C33.5 11 30.5 14 28.5 19.5 L23.6 33"
-          stroke="url(#vynra-mark-b)"
+          stroke={`url(#${b})`}
           strokeWidth="4.4"
           strokeLinecap="round"
           fill="none"

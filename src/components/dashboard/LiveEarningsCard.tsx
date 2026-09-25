@@ -1,169 +1,229 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Check, Pause, Play, Square } from 'lucide-react';
+import { Check, Clock3, Pause, PencilLine, Play, Square } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 import { useTicker } from '../../lib/useTicker';
-import { effectiveRate, formatCurrency, formatHMS, moneyFromSeconds, rateLabel } from '../../lib/calc';
+import { effectiveRate, formatCurrency, formatDurationLong, formatHMS, rateLabel, sessionEarnings, sessionMinutes, timeOf } from '../../lib/calc';
+import { activeWorkedSeconds, visibleJobs } from '../../lib/stats';
+import type { Session } from '../../types';
 import AnimatedAmount from '../ui/AnimatedAmount';
 import Button from '../ui/Button';
-import { Select } from '../ui/Field';
+import JobPicker from '../JobPicker';
+import StopSessionModal from './StopSessionModal';
+import AdjustStartModal from './AdjustStartModal';
 
-export default function LiveEarningsCard() {
-  const jobs = useStore((s) => s.jobs);
+type Props = {
+  onForgotStart: () => void;
+};
+
+export default function LiveEarningsCard({ onForgotStart }: Props) {
+  const allJobs = useStore((s) => s.jobs);
+  const sessions = useStore((s) => s.sessions);
   const active = useStore((s) => s.active);
-  const settings = useStore((s) => s.settings);
+  const symbol = useStore((s) => s.settings.currencySymbol);
   const startSession = useStore((s) => s.startSession);
   const pauseSession = useStore((s) => s.pauseSession);
   const resumeSession = useStore((s) => s.resumeSession);
-  const stopSession = useStore((s) => s.stopSession);
 
-  const [pickJobId, setPickJobId] = useState(jobs[0]?.id ?? '');
-  const [pickRateId, setPickRateId] = useState<string>('');
-  const [justStopped, setJustStopped] = useState<{ amount: number } | null>(null);
+  const jobs = visibleJobs(allJobs);
+  // Default to the job used most recently — usually the one you're about to start again.
+  const lastJobId = sessions.filter((s) => s.kind !== 'planned').sort((a, b) => b.createdAt - a.createdAt)[0]?.jobId;
+  const [pickJobId, setPickJobId] = useState(() => (jobs.some((j) => j.id === lastJobId) ? lastJobId! : jobs[0]?.id ?? ''));
+  const [pickRateId, setPickRateId] = useState<string | null>(null);
+  const [stopOpen, setStopOpen] = useState(false);
+  const [adjustOpen, setAdjustOpen] = useState(false);
+  const [saved, setSaved] = useState<Session | null>(null);
 
-  useTicker(!!active && !active.isPaused);
+  const now = useTicker(!!active);
 
-  const job = jobs.find((j) => j.id === (active?.jobId ?? pickJobId));
+  const pickJob = jobs.find((j) => j.id === pickJobId) ?? jobs[0];
+  const job = active ? allJobs.find((j) => j.id === active.jobId) : pickJob;
+  const rate = active ? effectiveRate(job, active.rateId) : effectiveRate(pickJob, pickRateId);
 
-  const elapsedSeconds = useMemo(() => {
-    if (!active) return 0;
-    const running = active.isPaused ? 0 : Date.now() - active.segmentStart;
-    return (active.accumulatedMs + running) / 1000;
-  }, [active, active?.isPaused, active?.accumulatedMs, active?.segmentStart]);
-
-  const rate = active ? effectiveRate(job, active.rateId) : effectiveRate(job, pickRateId || null);
-  const earned = moneyFromSeconds(elapsedSeconds, rate);
-  const perMinute = rate / 60;
+  const worked = active ? activeWorkedSeconds(active, now) : 0;
+  const earned = (worked / 3600) * rate;
+  // Total session length on the wall clock, pauses included.
+  const totalSeconds = active ? Math.max(worked, (now - active.sessionStart) / 1000) : 0;
 
   function handleStart() {
-    if (!job) return;
-    startSession(job.id, pickRateId || null);
+    if (!pickJob) return;
+    setSaved(null);
+    startSession(pickJob.id, pickRateId);
   }
 
-  function handleStop() {
-    const amount = earned;
-    stopSession();
-    setJustStopped({ amount });
-    setTimeout(() => setJustStopped(null), 2200);
+  function handleSaved(session: Session) {
+    setStopOpen(false);
+    setSaved(session);
+    setTimeout(() => setSaved((s) => (s?.id === session.id ? null : s)), 5000);
   }
-
-  const startedAtLabel = active ? new Date(active.sessionStart).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' }) : null;
 
   return (
-    <div className="relative overflow-hidden rounded-[28px] glass-card p-6 sm:p-8">
+    <div className="relative overflow-hidden rounded-[28px] glass-card p-5 sm:p-8">
       <div
-        className="pointer-events-none absolute -top-24 -right-24 h-72 w-72 rounded-full opacity-25 blur-3xl"
+        className={`pointer-events-none absolute -top-28 -right-24 h-80 w-80 rounded-full blur-3xl transition-opacity duration-700 ${active && !active.isPaused ? 'opacity-30' : 'opacity-15'}`}
         style={{ background: 'radial-gradient(circle, var(--color-neon), transparent 70%)' }}
       />
 
-      <AnimatePresence mode="wait">
-        {justStopped ? (
+      <AnimatePresence mode="wait" initial={false}>
+        {saved ? (
           <motion.div
-            key="stopped"
-            initial={{ opacity: 0, scale: 0.96 }}
+            key="saved"
+            initial={{ opacity: 0, scale: 0.97 }}
             animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.98 }}
-            className="relative flex flex-col items-center justify-center py-10 text-center"
+            exit={{ opacity: 0 }}
+            className="relative flex flex-col items-center justify-center py-8 text-center"
           >
-            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-[color:var(--color-neon)]/15 text-[color:var(--color-neon)]">
+            <motion.div
+              initial={{ scale: 0.6, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ type: 'spring', stiffness: 260, damping: 18 }}
+              className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-[color:var(--color-neon)]/15 text-[color:var(--color-neon)]"
+            >
               <Check size={28} />
-            </div>
+            </motion.div>
             <p className="text-sm text-[color:var(--color-ink-muted)]">Sessie opgeslagen</p>
-            <p className="mt-1 text-3xl font-bold text-[color:var(--color-neon)]" style={{ fontFamily: 'var(--font-display)' }}>
-              +<AnimatedAmount value={justStopped.amount} symbol={settings.currencySymbol} />
+            <p className="num mt-1 text-4xl font-bold text-[color:var(--color-neon)]">+{formatCurrency(sessionEarnings(saved, allJobs.find((j) => j.id === saved.jobId)), symbol)}</p>
+            <p className="mt-1 text-sm text-[color:var(--color-ink-muted)]">
+              {formatDurationLong(sessionMinutes(saved))} gewerkt · {allJobs.find((j) => j.id === saved.jobId)?.name}
             </p>
+            <div className="mt-6 flex gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setSaved(null)}>
+                Nieuwe sessie
+              </Button>
+              <Link to="/geschiedenis" className="inline-flex items-center rounded-xl px-3 py-1.5 text-xs font-medium text-[color:var(--color-ink-muted)] hover:text-[color:var(--color-ink)]">
+                Bekijk geschiedenis
+              </Link>
+            </div>
           </motion.div>
         ) : active ? (
-          <motion.div key="active" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="relative">
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-[color:var(--color-ink-faint)]">Huidige sessie</p>
-                <div className="mt-1.5 flex items-center gap-2">
-                  <span className="text-xl">{job?.icon}</span>
-                  <span className="text-lg font-semibold text-[color:var(--color-ink)]">{job?.name}</span>
-                </div>
-              </div>
-              <div className="text-right">
-                <p className="text-xs text-[color:var(--color-ink-faint)]">{rateLabel(job, active.rateId)}</p>
-                <p className="text-sm font-medium text-[color:var(--color-neon)]">
-                  {formatCurrency(rate, settings.currencySymbol)} / uur
+          <motion.div key="active" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="relative">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[color:var(--color-ink-faint)]">
+                  <span className="relative flex h-2 w-2">
+                    {!active.isPaused && <span className="absolute inset-0 rounded-full bg-[color:var(--color-neon)] animate-[ring-out_1.6s_ease-out_infinite]" />}
+                    <span className={`relative h-2 w-2 rounded-full ${active.isPaused ? 'bg-[color:var(--color-warn)]' : 'bg-[color:var(--color-neon)]'}`} />
+                  </span>
+                  {active.isPaused ? 'Gepauzeerd' : 'Huidige sessie'}
+                </p>
+                <p className="mt-2 flex items-center gap-2 text-lg font-semibold text-[color:var(--color-ink)]">
+                  <span className="text-2xl">{job?.icon}</span>
+                  <span className="truncate">{job?.name}</span>
                 </p>
               </div>
-            </div>
-
-            <div className="grid sm:grid-cols-2 gap-6 items-center">
-              <div>
-                <p className="text-xs text-[color:var(--color-ink-faint)] mb-1">
-                  {active.isPaused ? 'Gepauzeerd' : 'gewerkt'} · gestart om {startedAtLabel}
-                </p>
-                <p className="text-4xl sm:text-5xl font-bold tabular text-[color:var(--color-ink)]" style={{ fontFamily: 'var(--font-display)' }}>
-                  {formatHMS(elapsedSeconds)}
-                </p>
-              </div>
-              <div className="sm:text-right">
-                <p className="text-xs text-[color:var(--color-ink-faint)] mb-1">verdiend</p>
-                <p className="text-4xl sm:text-5xl font-bold text-[color:var(--color-neon)]" style={{ fontFamily: 'var(--font-display)' }}>
-                  <AnimatedAmount value={earned} symbol={settings.currencySymbol} />
-                </p>
-                <p className="mt-1 text-xs text-[color:var(--color-ink-faint)]">
-                  {formatCurrency(perMinute, settings.currencySymbol)} / minuut
-                </p>
+              <div className="shrink-0 rounded-2xl border border-[color:var(--color-border)] bg-[color:var(--color-fill)] px-3 py-2 text-right">
+                <p className="num text-sm font-semibold text-[color:var(--color-ink)]">{formatCurrency(rate, symbol)} / uur</p>
+                <p className="text-[11px] text-[color:var(--color-ink-muted)]">{rateLabel(job, active.rateId)}</p>
               </div>
             </div>
 
-            <div className="mt-8 flex gap-3">
+            <div className="mt-7 sm:mt-9">
+              <p className="text-xs text-[color:var(--color-ink-muted)]">verdiend</p>
+              <p className={`num mt-1 text-[3.25rem] leading-none sm:text-7xl font-bold transition-colors ${active.isPaused ? 'text-[color:var(--color-ink-muted)]' : 'text-[color:var(--color-neon)]'}`}>
+                <AnimatedAmount value={earned} symbol={symbol} />
+              </p>
+              <div className="mt-4 flex flex-wrap items-baseline gap-x-5 gap-y-1">
+                <p className="num text-2xl sm:text-3xl font-semibold text-[color:var(--color-ink)]">{formatHMS(worked)}</p>
+                <p className="text-sm text-[color:var(--color-ink-muted)]">gewerkt</p>
+                <p className="text-sm text-[color:var(--color-ink-muted)] tabular">{formatCurrency(rate / 60, symbol)} / minuut</p>
+              </div>
+            </div>
+
+            <dl className="mt-7 grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-[color:var(--color-border)] bg-[color:var(--color-border)] sm:grid-cols-4">
+              <Meta label="Uurloon" value={`${formatCurrency(rate, symbol)}`} />
+              <Meta label="Tarief" value={rateLabel(job, active.rateId)} />
+              <div className="bg-[color:var(--color-bg-elevated)] px-4 py-3">
+                <dt className="text-[11px] text-[color:var(--color-ink-faint)]">Gestart om</dt>
+                <dd className="mt-0.5 flex items-center gap-1.5">
+                  <span className="num text-sm font-semibold text-[color:var(--color-ink)]">{timeOf(new Date(active.sessionStart))}</span>
+                  <button
+                    onClick={() => setAdjustOpen(true)}
+                    className="rounded-md p-1 text-[color:var(--color-ink-faint)] hover:bg-[color:var(--color-fill-hover)] hover:text-[color:var(--color-neon)]"
+                    aria-label="Starttijd aanpassen"
+                    title="Starttijd aanpassen"
+                  >
+                    <PencilLine size={13} />
+                  </button>
+                </dd>
+              </div>
+              <Meta label="Totale sessieduur" value={formatHMS(totalSeconds)} />
+            </dl>
+
+            <div className="mt-6 grid grid-cols-2 gap-3">
               {active.isPaused ? (
-                <Button size="lg" fullWidth icon={<Play size={18} fill="currentColor" />} onClick={resumeSession}>
+                <Button size="lg" fullWidth icon={<Play size={18} fill="currentColor" />} onClick={resumeSession} className="h-14 sm:h-auto">
                   Hervatten
                 </Button>
               ) : (
-                <Button size="lg" fullWidth variant="secondary" icon={<Pause size={18} />} onClick={pauseSession}>
+                <Button size="lg" fullWidth variant="secondary" icon={<Pause size={18} />} onClick={pauseSession} className="h-14 sm:h-auto">
                   Pauze
                 </Button>
               )}
-              <Button size="lg" fullWidth variant="outline" icon={<Square size={16} fill="currentColor" />} onClick={handleStop}>
+              <Button size="lg" fullWidth variant="outline" icon={<Square size={15} fill="currentColor" />} onClick={() => setStopOpen(true)} className="h-14 sm:h-auto">
                 Stop
               </Button>
             </div>
           </motion.div>
         ) : (
-          <motion.div key="idle" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="relative">
-            <p className="text-xs font-medium uppercase tracking-wider text-[color:var(--color-ink-faint)]">Geen actieve sessie</p>
-            <h2 className="mt-1.5 text-2xl font-bold text-[color:var(--color-ink)]">Klaar om te beginnen?</h2>
-            <p className="mt-1 text-sm text-[color:var(--color-ink-muted)]">Kies je job en tarief, en zet de klok aan.</p>
+          <motion.div key="idle" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.98 }} className="relative">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[color:var(--color-ink-faint)]">Geen actieve sessie</p>
+            <h2 className="mt-2 text-2xl sm:text-3xl font-bold tracking-tight text-[color:var(--color-ink)]" style={{ fontFamily: 'var(--font-display)' }}>
+              Klaar om te beginnen?
+            </h2>
 
             {jobs.length === 0 ? (
-              <p className="mt-6 text-sm text-[color:var(--color-ink-muted)]">
-                Je hebt nog geen jobs. Maak er eerst één aan bij "Mijn jobs".
-              </p>
+              <div className="mt-6">
+                <p className="text-sm text-[color:var(--color-ink-muted)]">Maak eerst een job aan — daarna start je met één tik.</p>
+                <Link to="/jobs" className="mt-4 inline-flex">
+                  <Button>Nieuwe job</Button>
+                </Link>
+              </div>
             ) : (
               <>
-                <div className="mt-6 grid sm:grid-cols-2 gap-3">
-                  <Select value={pickJobId || job?.id} onChange={(e) => { setPickJobId(e.target.value); setPickRateId(''); }}>
-                    {jobs.map((j) => (
-                      <option key={j.id} value={j.id}>
-                        {j.icon} {j.name} — {formatCurrency(j.baseRate, settings.currencySymbol)}/u
-                      </option>
-                    ))}
-                  </Select>
-                  <Select value={pickRateId} onChange={(e) => setPickRateId(e.target.value)}>
-                    <option value="">Normaal — {formatCurrency(job?.baseRate ?? 0, settings.currencySymbol)}/u</option>
-                    {job?.rateRules.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.label} — {formatCurrency(job.baseRate + r.delta, settings.currencySymbol)}/u
-                      </option>
-                    ))}
-                  </Select>
+                <div className="mt-6">
+                  <JobPicker jobId={pickJob?.id ?? ''} rateId={pickRateId} onJobChange={setPickJobId} onRateChange={setPickRateId} />
                 </div>
 
-                <Button size="lg" fullWidth className="mt-6" icon={<Play size={20} fill="currentColor" />} onClick={handleStart}>
-                  Start
-                </Button>
+                <div className="mt-6 flex items-end justify-between gap-4">
+                  <div>
+                    <p className="text-xs text-[color:var(--color-ink-muted)]">Je verdient</p>
+                    <p className="num text-3xl sm:text-4xl font-bold text-[color:var(--color-ink)]">
+                      {formatCurrency(rate, symbol)}
+                      <span className="text-base font-medium text-[color:var(--color-ink-muted)]"> / uur</span>
+                    </p>
+                  </div>
+                  <p className="pb-1 text-sm text-[color:var(--color-ink-muted)] tabular">{formatCurrency(rate / 60, symbol)} / minuut</p>
+                </div>
+
+                <div className="relative mt-6">
+                  <Button size="lg" fullWidth className="h-16 text-lg" icon={<Play size={22} fill="currentColor" />} onClick={handleStart}>
+                    Start
+                  </Button>
+                </div>
+                <button
+                  onClick={onForgotStart}
+                  className="mt-3 flex w-full items-center justify-center gap-1.5 py-1 text-sm text-[color:var(--color-ink-muted)] hover:text-[color:var(--color-ink)]"
+                >
+                  <Clock3 size={14} /> Al eerder begonnen? Vul je echte starttijd in
+                </button>
               </>
             )}
           </motion.div>
         )}
       </AnimatePresence>
+
+      <StopSessionModal open={stopOpen} onClose={() => setStopOpen(false)} onSaved={handleSaved} />
+      <AdjustStartModal open={adjustOpen} onClose={() => setAdjustOpen(false)} />
+    </div>
+  );
+}
+
+function Meta({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="bg-[color:var(--color-bg-elevated)] px-4 py-3">
+      <dt className="text-[11px] text-[color:var(--color-ink-faint)]">{label}</dt>
+      <dd className="num mt-0.5 truncate text-sm font-semibold text-[color:var(--color-ink)]">{value}</dd>
     </div>
   );
 }
