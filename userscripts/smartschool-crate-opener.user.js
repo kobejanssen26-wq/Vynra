@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Smartschool CS:GO Crate Opener
 // @namespace    https://github.com/kobejanssen26-wq/vynra
-// @version      3.1.0
+// @version      3.1.1
 // @description  CS:GO-style crate opening animation for Smartschool results
 // @author       Vynra
 // @updateURL    https://raw.githubusercontent.com/kobejanssen26-wq/Vynra/claude/sweet-gates-k915fg/userscripts/smartschool-crate-opener.user.js
@@ -36,6 +36,7 @@
     scoreCellSelector: '', // alternatief: selector die enkel de score-elementen pakt
 
     ignoreSelector: 'script,style,noscript',
+    climbStopSelector: 'nav,[role="navigation"],[role="menubar"]',
     menuSelector: 'nav,header,[role="navigation"],[role="menubar"],[class*="topnav" i],[class*="navbar" i]',
 
     debounceMs: 300,
@@ -161,20 +162,44 @@
         if (!text || text.length > 20) continue;
         if (el.children.length === 1 && el.firstElementChild.textContent === text) continue;
         const sc = this.parseScore(text);
-        if (sc && this.visible(el)) out.push({ el, text: text.trim(), ...sc });
+        if (!sc || !this.visible(el)) continue;
+        const rc = el.getBoundingClientRect();
+        if (rc.width < 4 || rc.height < 4) continue; // sr-only / onzichtbare duplicaten
+        out.push({ el, text: text.trim(), ...sc });
       }
       return out;
     },
 
     /** Klim omhoog zolang de ouder nog maar EEN percentage en EEN breuk bevat (= een resultaat). */
     rowFor(cell, cells) {
+      const multi = (p) => {
+        const inside = cells.filter((c) => p.contains(c.el));
+        return (
+          inside.filter((c) => c.kind === 'pct').length > 1 || inside.filter((c) => c.kind === 'frac').length > 1
+        );
+      };
+      // Heeft dit element tekst naast de scorecellen (titel/datum)? Zo niet, is het nog geen volledige rij.
+      const hasOtherText = (el) => {
+        let n = 0;
+        const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        let t;
+        while ((t = w.nextNode())) {
+          const v = t.nodeValue.replace(/\s+/g, ' ').trim();
+          if (v.length > 2 && !cells.some((c) => c.el.contains(t)) && !this.parseScore(v)) n += v.length;
+        }
+        return n > 3;
+      };
       let row = cell.el;
       for (let i = 0; i < 40 && row.parentElement; i++) {
         const p = row.parentElement;
-        if (p.matches('body,main,form,[role="main"]') || (p.textContent || '').length > 500) break;
-        if (p.querySelector(CONFIG.menuSelector)) break;
-        const inside = cells.filter((c) => p.contains(c.el));
-        if (inside.filter((c) => c.kind === 'pct').length > 1 || inside.filter((c) => c.kind === 'frac').length > 1) break;
+        if (p.matches('body,main,form,[role="main"]')) break;
+        if (multi(p)) break;
+        // Normale stopregels, maar nooit stoppen zolang er nog geen titel/tekst in de rij zit
+        const needText = !hasOtherText(row);
+        if (!needText) {
+          if ((p.textContent || '').length > 500) break;
+          if (p.querySelector(CONFIG.climbStopSelector)) break;
+        }
         row = p;
       }
       return row;
@@ -910,7 +935,7 @@
 
     start() {
       if (window.top !== window.self) return;
-      log('v3.1.0 geladen op', location.href);
+      log('v3.1.1 geladen op', location.href);
       Settings.load();
       if (PageGate.urlLooksLikeResults()) PendingGuard.on();
 
