@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Smartschool CS:GO Crate Opener
 // @namespace    https://github.com/kobejanssen26-wq/vynra
-// @version      2.2.0
+// @version      2.2.2
 // @description  CS:GO-style crate opening animation for Smartschool results
 // @author       Vynra
 // @match        https://*.smartschool.be/*
@@ -44,7 +44,7 @@
 
 
     // Elementen waar we NIET in zoeken (navigatie, voetnoot, onze eigen UI, ...).
-    ignoreSelector: 'script,style,noscript,progress,[role="progressbar"]',
+    ignoreSelector: 'script,style,noscript',
     // Extra uitsluiting voor de pagina-kop-detectie (niet voor scores): het bovenste menu.
     menuSelector: 'nav,header,[role="navigation"],[role="menubar"],[class*="topnav" i],[class*="navbar" i]',
 
@@ -194,6 +194,7 @@
       for (let i = 0; i < 8 && row.parentElement; i++) {
         const p = row.parentElement;
         if (p.matches('body,main,form,[role="main"]') || (p.textContent || '').length > 500) break;
+        if (p.querySelector(CONFIG.menuSelector)) break; // nooit in containers met het bovenmenu klimmen
         const inside = cells.filter((c) => p.contains(c.el));
         if (inside.filter((c) => c.kind === 'pct').length > 1 || inside.filter((c) => c.kind === 'frac').length > 1) break;
         row = p;
@@ -210,7 +211,7 @@
         const t = n.nodeValue.replace(/\s+/g, ' ').trim();
         if (!t || scoreEls.some((s) => s.contains(n))) continue;
         if (this.parseScore(t) || /^[-–—•|:]+$/.test(t)) continue;
-        if (!parts.includes(t)) parts.push(t);
+        if (!parts.includes(t) && !/^(details|detail)$/i.test(t)) parts.push(t);
       }
       return parts;
     },
@@ -227,12 +228,20 @@
       const results = [];
       rows.forEach((group, row) => {
         // Voorkeur: breuk (bv. 15/20), anders percentage - beide leveren hetzelfde percentage.
-        const main = group.find((g) => g.kind === 'frac') || group[0];
+        const pct = group.find((g) => g.kind === 'pct');
+        const frac = group.find((g) => g.kind === 'frac');
+        // Toon exact wat Smartschool zelf als percentage toont (bv. 3/8 -> 38%), breuk als extra
+        const main = { percent: (pct || frac).percent, text: (frac || pct).text };
         const parts = this.labels(row, group.map((g) => g.el));
-        const title = parts[0] || 'Result';
+        // Titel: bij voorkeur een kop/titel-element in de rij, anders de eerste tekst
+        const head = row.querySelector('h1,h2,h3,h4,[class*="title" i],[class*="name" i]');
+        const headText = head && !group.some((g) => head.contains(g.el)) ? head.textContent.replace(/\s+/g, ' ').trim() : '';
+        const title = headText || parts[0] || 'Result';
+        if (headText) parts.splice(Math.max(0, parts.indexOf(headText)), 1);
+        if (!headText) parts.shift();
         results.push({
           title,
-          subtitle: parts.slice(1, 3).join(' · '),
+          subtitle: parts.slice(0, 2).join(' · '),
           percent: main.percent,
           raw: main.text,
           el: row,
@@ -806,7 +815,7 @@
 
     start() {
       if (window.top !== window.self) return; // niet in iframes
-      log('v2.2.0 geladen op', location.href);
+      log('v2.2.2 geladen op', location.href);
       Settings.load();
       if (PageGate.urlLooksLikeResults()) PendingGuard.on();
 
