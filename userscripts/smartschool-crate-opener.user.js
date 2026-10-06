@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Smartschool CS:GO Crate Opener
 // @namespace    https://github.com/kobejanssen26-wq/vynra
-// @version      2.2.4
+// @version      2.3.0
 // @description  CS:GO-style crate opening animation for Smartschool results
 // @author       Vynra
 // @updateURL    https://raw.githubusercontent.com/kobejanssen26-wq/Vynra/claude/sweet-gates-k915fg/userscripts/smartschool-crate-opener.user.js
@@ -269,6 +269,43 @@
     signature: (list) => list.map((r) => r.id).join('\n'),
   };
 
+  // ===== 4b. Onthoud echte resultaten (voor de roulette; nooit verzonnen) =====
+  const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const keyOf = (r) => `${r.title}|${r.raw}`;
+  const Store = {
+    key: 'ssCrateOpener.seen.v1',
+    cache: null,
+    all() {
+      if (!this.cache) {
+        try {
+          this.cache = JSON.parse(localStorage.getItem(this.key) || '[]');
+        } catch (_) {
+          this.cache = [];
+        }
+      }
+      return this.cache;
+    },
+    /** Bewaar elk resultaat dat op een Resultaten-pagina gezien is (max 300), zodat de roulette ook op een detailpagina echte scores heeft. */
+    add(results) {
+      const list = this.all();
+      let changed = false;
+      results.forEach((r) => {
+        if (list.some((x) => x.k === keyOf(r))) return;
+        list.push({ k: keyOf(r), title: r.title, percent: r.percent, raw: r.raw });
+        changed = true;
+      });
+      if (!changed) return;
+      if (list.length > 300) list.splice(0, list.length - 300);
+      try {
+        localStorage.setItem(this.key, JSON.stringify(list));
+      } catch (_) {}
+    },
+    /** Echte resultaten behalve het winnende. */
+    others(winner) {
+      return this.all().filter((x) => x.k !== keyOf(winner));
+    },
+  };
+
   // ===== 5. Instellingen (localStorage, met veilige fallback) =====
   const Settings = {
     data: { ...CONFIG.defaults },
@@ -371,7 +408,7 @@
     .tile:before{content:'';position:absolute;inset:auto 0 0 0;height:5px;background:var(--c)}
     .tile:after{content:'';position:absolute;inset:0;background:radial-gradient(circle at 50% 100%,var(--c),transparent 70%);opacity:.28}
     .tile b{position:relative;z-index:1;font-size:36px;font-weight:800;text-shadow:0 0 18px var(--c);color:#fff}
-    .tile small{position:relative;z-index:1;margin-top:6px;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--c);font-weight:700}
+    .tile small{max-width:92%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:relative;z-index:1;margin-top:6px;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--c);font-weight:700}
     .tile.win.lit{box-shadow:0 0 0 2px var(--c),0 0 40px var(--c);animation:pop .6s ease both}
     @keyframes pop{50%{transform:scale(1.12)}}
     .marker{position:absolute;top:-4px;bottom:-4px;left:50%;width:4px;margin-left:-2px;z-index:4;
@@ -540,7 +577,6 @@
     }
 
     renderList() {
-      const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
       this.$('.list').innerHTML = this.results
         .map((r, i) => {
           const done = this.opened.has(r.id);
@@ -560,7 +596,10 @@
     choose(i) {
       this.current = this.results[i];
       this.$('.crate-title').textContent = this.current.title;
-      this.$('.crate-sub').textContent = this.current.subtitle || 'Crack it open to reveal your score.';
+      this.$('.crate-sub').textContent =
+        Store.others(this.current).length === 0
+          ? 'Tip: open the full Results list once, so the crate can use your other real results.'
+          : this.current.subtitle || 'Crack it open to reveal your score.';
       this.show('locked');
     }
 
@@ -636,27 +675,42 @@
     }
 
     /* ---- roulette ---- */
+    /** Roulette-items: ALLEEN echte resultaten uit Smartschool. Het winnende item is het gekozen resultaat. */
     buildStrip(winner) {
       const { tileCount: n, winnerIndex: wi } = CONFIG;
+      const pool = Store.others(winner);
+      const real = pool.length > 0;
+      const bag = [];
       const items = [];
       for (let i = 0; i < n; i++) {
-        let v;
-        if (i === wi) v = winner;
-        else {
-          do {
-            // Gewogen random: middelhoge scores vaker, extremen zeldzamer (net als in een echte case)
-            v = Math.round(clamp(rand(0, 1) ** 0.8 * 100 + rand(-8, 8), 3, 100));
-          } while (Math.abs(v - winner) < 1.5 && Math.abs(i - wi) < 3);
+        if (i === wi) {
+          items.push({ title: winner.title, percent: winner.percent, raw: winner.raw });
+          continue;
         }
-        items.push(v);
+        if (!real) {
+          // Noodgeval (nog geen andere resultaten gezien): neutrale placeholders, zonder titel
+          items.push({ title: '', percent: Math.round(rand(8, 98)) });
+          continue;
+        }
+        if (!bag.length) bag.push(...pool.slice().sort(() => Math.random() - 0.5));
+        let pick = bag.pop();
+        const prev = items[i - 1];
+        if (prev && prev.k === pick.k && bag.length) {
+          const alt = bag.pop();
+          bag.push(pick);
+          pick = alt;
+        }
+        items.push(pick);
       }
+      this.fakeFillers = !real;
       const strip = this.$('.strip');
       strip.style.setProperty('--tw', CONFIG.tileWidth + 'px');
       strip.style.setProperty('--gap', CONFIG.tileGap + 'px');
       strip.innerHTML = items
-        .map((v, i) => {
-          const t = tierFor(v);
-          return `<div class="tile${i === wi ? ' win' : ''}" style="--c:${t.color}"><b>${fmt(v)}</b><small>${t.name}</small></div>`;
+        .map((it, i) => {
+          const t = tierFor(it.percent);
+          const label = it.title ? esc(it.title) : t.name;
+          return `<div class="tile${i === wi ? ' win' : ''}" style="--c:${t.color}"><b>${fmt(it.percent)}</b><small>${label}</small></div>`;
         })
         .join('');
       return strip;
@@ -674,7 +728,7 @@
       this.$('.status').textContent = 'Rolling\u2026';
       this.$('.root').style.setProperty('--accent', '#8847ff');
 
-      const strip = this.buildStrip(found.percent);
+      const strip = this.buildStrip(found);
       const wrap = this.$('.roulette');
       const step = CONFIG.tileWidth + CONFIG.tileGap;
       const centre = wrap.clientWidth / 2;
@@ -802,7 +856,7 @@
 
     start() {
       if (window.top !== window.self) return; // niet in iframes
-      log('v2.2.4 geladen op', location.href);
+      log('v2.3.0 geladen op', location.href);
       Settings.load();
       if (PageGate.urlLooksLikeResults() && !App.ui) PendingGuard.on();
 
@@ -843,6 +897,7 @@
       }
       const results = ResultsScanner.scan();
       window.__ssCrate = { results, scan: () => ResultsScanner.scan(), cells: () => ResultsScanner.scoreCells() };
+      Store.add(results);
       if (!results.length && this.ui) return; // tussentijdse herrender van de site: UI laten staan
       if (!results.length) {
         log('Resultaten-pagina, maar geen scores gevonden. Score-cellen:', ResultsScanner.scoreCells().length);
