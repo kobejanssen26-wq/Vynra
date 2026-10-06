@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Smartschool CS:GO Crate Opener
 // @namespace    https://github.com/kobejanssen26-wq/vynra
-// @version      2.2.2
+// @version      2.2.3
 // @description  CS:GO-style crate opening animation for Smartschool results
 // @author       Vynra
 // @match        https://*.smartschool.be/*
@@ -164,7 +164,8 @@
     },
 
     visible(el) {
-      return el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+      // Alleen layout-aanwezigheid (display:none telt niet mee); visibility negeren, want onze eigen pre-hide zet die tijdelijk.
+      return el.getClientRects().length > 0;
     },
 
     /** Alle "scorecellen": kleine elementen waarvan de volledige tekst een score is. */
@@ -815,9 +816,9 @@
 
     start() {
       if (window.top !== window.self) return; // niet in iframes
-      log('v2.2.2 geladen op', location.href);
+      log('v2.2.3 geladen op', location.href);
       Settings.load();
-      if (PageGate.urlLooksLikeResults()) PendingGuard.on();
+      if (PageGate.urlLooksLikeResults() && !App.ui) PendingGuard.on();
 
       // History-API haken (pushState/replaceState vuren geen event af)
       ['pushState', 'replaceState'].forEach((fn) => {
@@ -856,6 +857,7 @@
       }
       const results = ResultsScanner.scan();
       window.__ssCrate = { results, scan: () => ResultsScanner.scan(), cells: () => ResultsScanner.scoreCells() };
+      if (!results.length && this.ui) return; // tussentijdse herrender van de site: UI laten staan
       if (!results.length) {
         log('Resultaten-pagina, maar geen scores gevonden. Score-cellen:', ResultsScanner.scoreCells().length);
         badge('actief, maar geen scores herkend', false);
