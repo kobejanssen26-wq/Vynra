@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Smartschool CS:GO Crate Opener
 // @namespace    https://github.com/kobejanssen26-wq/vynra
-// @version      2.1.0
+// @version      2.2.0
 // @description  CS:GO-style crate opening animation for Smartschool results
 // @author       Vynra
 // @match        https://*.smartschool.be/*
@@ -781,13 +781,32 @@
   /* ======================================================================
    * 8. Boot + SPA-navigatie: UI verschijnt alleen op de Resultaten-pagina
    * ==================================================================== */
+  /** Klein label linksonder: laat zien dat het script draait en wat het op de pagina vond. */
+  function badge(text, ok) {
+    let host = document.querySelector('[data-ss-crate-badge]');
+    if (!host) {
+      host = document.createElement('div');
+      host.setAttribute('data-ss-crate-badge', '');
+      host.attachShadow({ mode: 'open' }).innerHTML =
+        '<style>div{position:fixed;left:16px;bottom:16px;z-index:2147483646;font:600 12px system-ui,sans-serif;color:#fff;' +
+        'padding:8px 12px;border-radius:99px;box-shadow:0 6px 20px rgba(0,0,0,.35);transition:opacity .4s}</style><div></div>';
+      document.body.appendChild(host);
+    }
+    const d = host.shadowRoot.querySelector('div');
+    d.textContent = '🎁 Crate Opener: ' + text;
+    d.style.background = ok ? '#2e9e5b' : '#c2410c';
+    d.style.opacity = '1';
+    clearTimeout(badge.t);
+    badge.t = setTimeout(() => (d.style.opacity = '0'), 6000);
+  }
+
   const App = {
     ui: null,
     timer: 0,
 
     start() {
       if (window.top !== window.self) return; // niet in iframes
-      log('v2.1.0 geladen op', location.href);
+      log('v2.2.0 geladen op', location.href);
       Settings.load();
       if (PageGate.urlLooksLikeResults()) PendingGuard.on();
 
@@ -830,6 +849,7 @@
       window.__ssCrate = { results, scan: () => ResultsScanner.scan(), cells: () => ResultsScanner.scoreCells() };
       if (!results.length) {
         log('Resultaten-pagina, maar geen scores gevonden. Score-cellen:', ResultsScanner.scoreCells().length);
+        badge('actief, maar geen scores herkend', false);
         // Resultaten zijn mogelijk nog aan het laden; pagina blijft normaal zichtbaar.
         PendingGuard.off();
         return;
@@ -844,6 +864,7 @@
       }
       this.sig = ResultsScanner.signature(results);
       log('Resultaten-pagina gedetecteerd:', results.map((r) => `${r.title} ${r.raw}`));
+      badge(`${results.length} resultaat${results.length === 1 ? '' : 'en'} herkend`, true);
       this.ui = new CrateUI(results, () => ResultsScanner.scan());
       PendingGuard.off();
     },
