@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Smartschool CS:GO Crate Opener
 // @namespace    https://github.com/kobejanssen26-wq/vynra
-// @version      2.0.0
+// @version      2.1.0
 // @description  CS:GO-style crate opening animation for Smartschool results
 // @author       Vynra
 // @match        https://*.smartschool.be/*
@@ -44,7 +44,9 @@
 
 
     // Elementen waar we NIET in zoeken (navigatie, voetnoot, onze eigen UI, ...).
-    ignoreSelector: 'script,style,noscript,nav,footer,header nav,[aria-hidden="true"],progress,[role="progressbar"]',
+    ignoreSelector: 'script,style,noscript,progress,[role="progressbar"]',
+    // Extra uitsluiting voor de pagina-kop-detectie (niet voor scores): het bovenste menu.
+    menuSelector: 'nav,header,[role="navigation"],[role="menubar"],[class*="topnav" i],[class*="navbar" i]',
 
     debounceMs: 300, // wachttijd na DOM-wijzigingen voor we opnieuw controleren
     failSafeRevealMs: 4000, // pagina nooit langer dan dit verborgen houden zonder crate
@@ -108,7 +110,7 @@
       const heads = document.querySelectorAll('h1,h2,h3,[class*="title" i],[class*="heading" i]');
       return Array.from(heads).some(
         (h) =>
-          !h.closest(CONFIG.ignoreSelector + ',[data-ss-crate]') &&
+          !h.closest(CONFIG.ignoreSelector + ',' + CONFIG.menuSelector + ',[data-ss-crate]') &&
           CONFIG.resultsHeading.test((h.textContent || '').trim()) &&
           h.getClientRects().length > 0
       );
@@ -183,15 +185,17 @@
       return out;
     },
 
-    /** Bepaal de "rij" waar een scorecel bij hoort (tr/li/kaart). */
+    /**
+     * Bepaal de "kaart/rij" van een scorecel: klim omhoog zolang de ouder nog maar
+     * ÉÉN percentage en ÉÉN breuk bevat (= één resultaat; Smartschool toont beide per kaart).
+     */
     rowFor(cell, cells) {
-      const sem = cell.el.closest('tr,li,[role="row"],[role="listitem"]');
-      if (sem && !sem.matches('body,main')) return sem;
       let row = cell.el;
-      for (let i = 0; i < 5 && row.parentElement; i++) {
+      for (let i = 0; i < 8 && row.parentElement; i++) {
         const p = row.parentElement;
-        if (p.matches('body,main,form,[role="main"]')) break;
-        if (cells.filter((c) => p.contains(c.el)).length > 1) break;
+        if (p.matches('body,main,form,[role="main"]') || (p.textContent || '').length > 500) break;
+        const inside = cells.filter((c) => p.contains(c.el));
+        if (inside.filter((c) => c.kind === 'pct').length > 1 || inside.filter((c) => c.kind === 'frac').length > 1) break;
         row = p;
       }
       return row;
@@ -234,8 +238,14 @@
           el: row,
         });
       });
-      results.forEach((r, i) => (r.id = `${i}|${r.title}|${r.raw}`));
-      return results;
+      // Het detailpaneel rechts toont hetzelfde resultaat nog eens -> ontdubbelen
+      const seen = new Set();
+      const unique = results.filter((r) => {
+        const k = `${r.title}|${r.raw}`;
+        return seen.has(k) ? false : (seen.add(k), true);
+      });
+      unique.forEach((r, i) => (r.id = `${i}|${r.title}|${r.raw}`));
+      return unique;
     },
 
     /** Optioneel: eigen selectors (CONFIG.rowSelector + scoreInRowSelector + titleInRowSelector). */
@@ -777,6 +787,7 @@
 
     start() {
       if (window.top !== window.self) return; // niet in iframes
+      log('v2.1.0 geladen op', location.href);
       Settings.load();
       if (PageGate.urlLooksLikeResults()) PendingGuard.on();
 
@@ -816,7 +827,9 @@
         return;
       }
       const results = ResultsScanner.scan();
+      window.__ssCrate = { results, scan: () => ResultsScanner.scan(), cells: () => ResultsScanner.scoreCells() };
       if (!results.length) {
+        log('Resultaten-pagina, maar geen scores gevonden. Score-cellen:', ResultsScanner.scoreCells().length);
         // Resultaten zijn mogelijk nog aan het laden; pagina blijft normaal zichtbaar.
         PendingGuard.off();
         return;
