@@ -806,11 +806,13 @@
 
     ensureLayer() {
       if (this.layer && this.layer.isConnected) return;
+      const old = Array.from(this.crates.values());
       const l = document.createElement('div');
       l.setAttribute('data-ss-crate', '');
       l.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;z-index:900;pointer-events:none;';
       document.body.appendChild(l);
       this.layer = l;
+      old.forEach((c) => l.appendChild(c.host)); // layer was door de site weggegooid: widgets terugzetten
       const frame = () => {
         this.crates.forEach((c) => c.position());
         this.raf = requestAnimationFrame(frame);
@@ -881,6 +883,10 @@
   // ===== 12. Label linksonder: laat zien dat het script draait =====
   function badge(text, ok) {
     let host = document.querySelector('[data-ss-crate-badge]');
+    if (host && !host.shadowRoot) {
+      host.remove();
+      host = null;
+    }
     if (!host) {
       host = document.createElement('div');
       host.setAttribute('data-ss-crate-badge', '');
