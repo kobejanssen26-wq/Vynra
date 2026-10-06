@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Smartschool CS:GO Crate Opener
 // @namespace    https://github.com/kobejanssen26-wq/vynra
-// @version      2.4.0
+// @version      3.0.0
 // @description  CS:GO-style crate opening animation for Smartschool results
 // @author       Vynra
 // @updateURL    https://raw.githubusercontent.com/kobejanssen26-wq/Vynra/claude/sweet-gates-k915fg/userscripts/smartschool-crate-opener.user.js
@@ -13,52 +13,40 @@
 // ==/UserScript==
 
 /*
- * INSTALLATIE
- *   1. Installeer Tampermonkey, maak een nieuw script en plak dit bestand erin
- *      (of open de "raw" URL van dit bestand: Tampermonkey biedt dan zelf Install aan).
- *   2. Controleer dat de @match-regels hierboven overeenkomen met jouw Smartschool-URL.
- *      Staat je URL er niet bij? Voeg een regel toe, bv.  // @match  https://jouwdomein.nl/resultaat/*
- *   3. Het script doet niets, behalve op de Resultaten-pagina (Ga naar -> Resultaten).
- *      Worden jouw resultaten niet goed gelezen? Vul CONFIG.rowSelector /
- *      scoreInRowSelector / titleInRowSelector in (rechtsklik -> Inspect). Zie CONFIG.
- *
- * De script leest de score alleen uit de bestaande pagina; er wordt NIETS willekeurig
- * gegenereerd en de originele pagina wordt nooit aangepast of verwijderd. De crate-UI
- * ligt als overlay (in een Shadow DOM) bovenop de pagina.
+ * Elke toets/taak op de Resultaten-pagina krijgt een EIGEN kleine crate (inline, naast de kaart).
+ * De echte score van dat resultaat blijft verborgen tot je die crate opent.
+ * Alles wordt uit de bestaande pagina gelezen; er wordt niets verzonnen en niets verwijderd.
+ * Buiten de Resultaten-pagina doet het script niets.
  */
 
 (function () {
   'use strict';
 
-  // ===== 1. CONFIG - hier pas je dingen makkelijk aan =====
+  // ===== 1. CONFIG =====
   const CONFIG = {
     // Herkenning van de Resultaten-pagina (domein-onafhankelijk): pad/hash/zoekopdracht OF een kop "Resultaten".
-    resultsUrlPattern: /\/results(?:\/|$|\?|#)|\/skore|resultaten/i,
+    resultsUrlPattern: /\/results(?:\/|$|\?|#)|\/skore|resultaten/i,
     resultsHeading: /^(resultaten|results)$/i,
 
     // Optionele overrides als de automatische uitlezing bij jouw school niet klopt:
     rowSelector: '', // bv. 'table.results tr' - een rij per resultaat
     scoreInRowSelector: '', // bv. 'td.score' (binnen de rij)
     titleInRowSelector: '', // bv. 'td.name' (binnen de rij)
-    subjectSelector: '', // optioneel: element (binnen de rij) met de vaknaam, bv. '.course-name'
+    subjectSelector: '', // optioneel: element (binnen de rij) met de vaknaam
     scoreCellSelector: '', // alternatief: selector die enkel de score-elementen pakt
 
-
-    // Elementen waar we NIET in zoeken (navigatie, voetnoot, onze eigen UI, ...).
     ignoreSelector: 'script,style,noscript',
-    // Extra uitsluiting voor de pagina-kop-detectie (niet voor scores): het bovenste menu.
     menuSelector: 'nav,header,[role="navigation"],[role="menubar"],[class*="topnav" i],[class*="navbar" i]',
 
-    debounceMs: 300, // wachttijd na DOM-wijzigingen voor we opnieuw controleren
-    failSafeRevealMs: 4000, // pagina nooit langer dan dit verborgen houden zonder crate
+    debounceMs: 300,
+    failSafeRevealMs: 4000,
 
-    spinBaseMs: 7500, // duur van de animatie bij snelheid 1x
-    tileWidth: 150,
-    tileGap: 10,
-    tileCount: 64,
-    winnerIndex: 52,
+    spinBaseMs: 5200, // duur bij snelheid 1x
+    tileWidth: 52,
+    tileGap: 8,
+    tileCount: 48,
+    winnerIndex: 38,
 
-    // Rarity-kleuren op basis van percentage (hoog = zeldzamer).
     tiers: [
       { min: 90, name: 'Covert', color: '#eb4b4b' },
       { min: 80, name: 'Classified', color: '#d32ce6' },
@@ -67,7 +55,6 @@
       { min: 35, name: 'Industrial', color: '#5e98d9' },
       { min: 0, name: 'Consumer', color: '#b0c3d9' },
     ],
-
     speeds: [
       { label: 'Slow', value: 0.6 },
       { label: 'Normal', value: 1 },
@@ -84,6 +71,9 @@
   const rand = (a, b) => a + Math.random() * (b - a);
   const tierFor = (p) => CONFIG.tiers.find((t) => p >= t.min) || CONFIG.tiers[CONFIG.tiers.length - 1];
   const fmt = (p) => (Number.isInteger(p) ? String(p) : p.toFixed(1)) + '%';
+  const nl = (n) => String(n).replace('.', ',');
+  const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const keyOf = (r) => `${r.title}|${r.raw}`;
 
   function whenBodyReady(cb) {
     if (document.body) return cb();
@@ -98,11 +88,9 @@
 
   // ===== 3. Pagina-herkenning: ALLEEN de Resultaten-pagina (SPA-proof) =====
   const PageGate = {
-    /** Pre-hide alleen als de URL er al op wijst - voorkomt een flits van de echte scores. */
     urlLooksLikeResults() {
       return CONFIG.resultsUrlPattern.test(location.pathname + location.hash + location.search);
     },
-    /** Zichtbare kop "Resultaten" in de pagina-inhoud (niet in het navigatiemenu). */
     hasResultsHeading() {
       const heads = document.querySelectorAll('h1,h2,h3,[class*="title" i],[class*="heading" i]');
       return Array.from(heads).some(
@@ -117,6 +105,7 @@
     },
   };
 
+  /** Voorkomt dat de echte scores even zichtbaar zijn voordat de crates er staan. */
   const PendingGuard = {
     on() {
       if (!document.documentElement) return setTimeout(() => this.on(), 5);
@@ -140,7 +129,6 @@
     FRAC: /^\s*(\d{1,4}(?:[.,]\d+)?)\s*(?:\/|van de|van|out of|uit)\s*(\d{1,4}(?:[.,]\d+)?)\s*$/i,
     num: (s) => parseFloat(String(s).replace(',', '.')),
 
-    /** "78%" of "15/20" -> {percent, kind} ; strikt, de hele celtekst moet de score zijn. */
     parseScore(text) {
       const t = (text || '').replace(/\u00a0/g, ' ').trim();
       if (!t || t.length > 20) return null;
@@ -159,11 +147,9 @@
     },
 
     visible(el) {
-      // Alleen layout-aanwezigheid (display:none telt niet mee); visibility negeren, want onze eigen pre-hide zet die tijdelijk.
       return el.getClientRects().length > 0;
     },
 
-    /** Alle "scorecellen": kleine elementen waarvan de volledige tekst een score is. */
     scoreCells() {
       const out = [];
       const all = CONFIG.scoreCellSelector
@@ -173,7 +159,6 @@
         if (el.children.length > 2 || el.closest(CONFIG.ignoreSelector + ',[data-ss-crate]')) continue;
         const text = el.textContent;
         if (!text || text.length > 20) continue;
-        // Alleen het diepste element dat de tekst bevat (geen dubbele telling van wrappers)
         if (el.children.length === 1 && el.firstElementChild.textContent === text) continue;
         const sc = this.parseScore(text);
         if (sc && this.visible(el)) out.push({ el, text: text.trim(), ...sc });
@@ -181,16 +166,13 @@
       return out;
     },
 
-    /**
-     * Bepaal de "kaart/rij" van een scorecel: klim omhoog zolang de ouder nog maar
-     * \u00c9\u00c9N percentage en \u00c9\u00c9N breuk bevat (= \u00e9\u00e9n resultaat; Smartschool toont beide per kaart).
-     */
+    /** Klim omhoog zolang de ouder nog maar EEN percentage en EEN breuk bevat (= een resultaat). */
     rowFor(cell, cells) {
       let row = cell.el;
       for (let i = 0; i < 8 && row.parentElement; i++) {
         const p = row.parentElement;
         if (p.matches('body,main,form,[role="main"]') || (p.textContent || '').length > 500) break;
-        if (p.querySelector(CONFIG.menuSelector)) break; // nooit in containers met het bovenmenu klimmen
+        if (p.querySelector(CONFIG.menuSelector)) break;
         const inside = cells.filter((c) => p.contains(c.el));
         if (inside.filter((c) => c.kind === 'pct').length > 1 || inside.filter((c) => c.kind === 'frac').length > 1) break;
         row = p;
@@ -198,7 +180,7 @@
       return row;
     },
 
-    /** Titel/vak/toets uit de tekst van de rij halen (zonder de score zelf). */
+    /** Tekstdelen van een rij (zonder de score zelf): [{t, el}] */
     labels(row, scoreEls) {
       const parts = [];
       const w = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
@@ -207,25 +189,26 @@
         const t = n.nodeValue.replace(/\s+/g, ' ').trim();
         if (!t || scoreEls.some((s) => s.contains(n))) continue;
         if (this.parseScore(t) || /^[-\u2013\u2014\u2022|:]+$/.test(t)) continue;
-        if (!parts.includes(t) && !/^(details|detail)$/i.test(t)) parts.push(t);
+        if (/^(details|detail)$/i.test(t) || parts.some((p) => p.t === t)) continue;
+        parts.push({ t, el: n.parentElement });
       }
       return parts;
     },
 
-    /** Vak afleiden: eigen selector, of het label "Vak - soort" (bv. "Databanken - kennis") dat geen datum/titel is. */
-    subjectOf(row, parts, title) {
+    subjectOf(row, texts, title) {
       if (CONFIG.subjectSelector) {
         const el = row.querySelector(CONFIG.subjectSelector);
         if (el) return el.textContent.replace(/\s+/g, ' ').trim();
       }
       const dateRe = /\b(maandag|dinsdag|woensdag|donderdag|vrijdag|zaterdag|zondag|januari|februari|maart|april|mei|juni|juli|augustus|september|oktober|november|december)\b|\d{1,2}[\/.-]\d{1,2}/i;
-      const part = parts.find((t) => t !== title && !dateRe.test(t) && / - /.test(t));
+      const part = texts.find((t) => t !== title && !dateRe.test(t) && / - /.test(t));
       if (!part) return '';
       let v = part.split(' - ')[0].trim();
       if (v.length > 3 && v === v.toUpperCase()) v = v.charAt(0) + v.slice(1).toLowerCase();
       return v;
     },
 
+    /** Alle resultaten op de pagina: [{key,title,subject,percent,raw,got,max,el,cells,titleEl}] */
     scan() {
       if (CONFIG.rowSelector) return this.scanCustom();
       const cells = this.scoreCells();
@@ -235,62 +218,88 @@
         if (!rows.has(row)) rows.set(row, []);
         rows.get(row).push(c);
       }
-      const results = [];
+      const out = [];
       rows.forEach((group, row) => {
-        // Voorkeur: breuk (bv. 15/20), anders percentage - beide leveren hetzelfde percentage.
         const pct = group.find((g) => g.kind === 'pct');
         const frac = group.find((g) => g.kind === 'frac');
-        // Toon exact wat Smartschool zelf als percentage toont (bv. 3/8 -> 38%), breuk als extra
-        const main = { percent: (pct || frac).percent, text: (frac || pct).text, got: frac && frac.got, max: frac && frac.max };
         const parts = this.labels(row, group.map((g) => g.el));
-        // Titel: bij voorkeur een kop/titel-element in de rij, anders de eerste tekst
         const head = row.querySelector('h1,h2,h3,h4,[class*="title" i],[class*="name" i]');
-        const headText = head && !group.some((g) => head.contains(g.el)) ? head.textContent.replace(/\s+/g, ' ').trim() : '';
-        const title = headText || parts[0] || 'Result';
-        if (headText) parts.splice(Math.max(0, parts.indexOf(headText)), 1);
-        if (!headText) parts.shift();
-        const subject = this.subjectOf(row, parts, title);
-        results.push({
+        const headOk = head && !group.some((g) => head.contains(g.el) || g.el.contains(head));
+        const headText = headOk ? head.textContent.replace(/\s+/g, ' ').trim() : '';
+        let title;
+        let titleEl;
+        let rest;
+        if (headText) {
+          title = headText;
+          titleEl = head;
+          rest = parts.filter((p) => !head.contains(p.el));
+        } else {
+          rest = parts.slice();
+          const first = rest.shift();
+          title = first ? first.t : 'Result';
+          titleEl = first ? first.el : null;
+        }
+        const texts = rest.map((p) => p.t);
+        const r = {
           title,
-          subject,
-          got: main.got,
-          max: main.max,
-          subtitle: parts.slice(0, 2).join(' \u00b7 '),
-          percent: main.percent,
-          raw: main.text,
+          subject: this.subjectOf(row, texts, title),
+          subtitle: texts.slice(0, 2).join(' \u00b7 '),
+          percent: (pct || frac).percent,
+          raw: (frac || pct).text,
+          got: frac && frac.got,
+          max: frac && frac.max,
           el: row,
-        });
+          cells: group.map((g) => g.el),
+          titleEl,
+        };
+        r.key = keyOf(r);
+        out.push(r);
       });
-      // Het detailpaneel rechts toont hetzelfde resultaat nog eens -> ontdubbelen
-      const seen = new Set();
-      const unique = results.filter((r) => {
-        const k = `${r.title}|${r.raw}`;
-        return seen.has(k) ? false : (seen.add(k), true);
-      });
-      unique.forEach((r, i) => (r.id = `${i}|${r.title}|${r.raw}`));
-      return unique;
+      return out;
     },
 
-    /** Optioneel: eigen selectors (CONFIG.rowSelector + scoreInRowSelector + titleInRowSelector). */
     scanCustom() {
       return Array.from(document.querySelectorAll(CONFIG.rowSelector))
-        .map((row, i) => {
+        .map((row) => {
           const sEl = CONFIG.scoreInRowSelector ? row.querySelector(CONFIG.scoreInRowSelector) : row;
           const sc = sEl && this.parseScore(sEl.textContent.trim());
           if (!sc) return null;
           const tEl = CONFIG.titleInRowSelector && row.querySelector(CONFIG.titleInRowSelector);
-          const title = (tEl ? tEl.textContent : this.labels(row, [sEl])[0] || 'Result').trim();
-          return { id: `${i}|${title}|${sEl.textContent.trim()}`, title, subtitle: '', percent: sc.percent, raw: sEl.textContent.trim(), el: row };
+          const title = (tEl ? tEl.textContent : (this.labels(row, [sEl])[0] || { t: 'Result' }).t).trim();
+          const raw = sEl.textContent.trim();
+          const r = {
+            title,
+            subject: this.subjectOf(row, [], title),
+            subtitle: '',
+            percent: sc.percent,
+            raw,
+            got: sc.got,
+            max: sc.max,
+            el: row,
+            cells: [sEl],
+            titleEl: tEl || null,
+          };
+          r.key = keyOf(r);
+          return r;
         })
         .filter(Boolean);
     },
 
-    signature: (list) => list.map((r) => r.id).join('\n'),
+    /** Welke elementen moeten verborgen worden (cirkel + percentage + breuk), zonder titel/datum. */
+    hideTargets(r) {
+      const set = new Set();
+      r.cells.forEach((c) => {
+        let t = c;
+        while (t.parentElement && t.parentElement !== r.el && !(r.titleEl && t.parentElement.contains(r.titleEl))) {
+          t = t.parentElement;
+        }
+        set.add(t);
+      });
+      return Array.from(set);
+    },
   };
 
-  // ===== 4b. Onthoud echte resultaten (voor de roulette; nooit verzonnen) =====
-  const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const keyOf = (r) => `${r.title}|${r.raw}`;
+  // ===== 5. Onthoud echte resultaten (voor de roulette; nooit verzonnen) =====
   const Store = {
     key: 'ssCrateOpener.seen.v1',
     cache: null,
@@ -304,13 +313,12 @@
       }
       return this.cache;
     },
-    /** Bewaar elk resultaat dat op een Resultaten-pagina gezien is (max 300), zodat de roulette ook op een detailpagina echte scores heeft. */
     add(results) {
       const list = this.all();
       let changed = false;
       results.forEach((r) => {
-        if (list.some((x) => x.k === keyOf(r))) return;
-        list.push({ k: keyOf(r), title: r.title, percent: r.percent, raw: r.raw });
+        if (list.some((x) => x.k === r.key)) return;
+        list.push({ k: r.key, title: r.title, percent: r.percent, raw: r.raw });
         changed = true;
       });
       if (!changed) return;
@@ -319,13 +327,44 @@
         localStorage.setItem(this.key, JSON.stringify(list));
       } catch (_) {}
     },
-    /** Echte resultaten behalve het winnende. */
-    others(winner) {
-      return this.all().filter((x) => x.k !== keyOf(winner));
+    others(key) {
+      return this.all().filter((x) => x.k !== key);
     },
   };
 
-  // ===== 5. Instellingen (localStorage, met veilige fallback) =====
+  /** Welke crates al open zijn (blijft bewaard tijdens dit browsertabblad). */
+  const Opened = {
+    key: 'ssCrateOpener.opened.v1',
+    set: null,
+    load() {
+      if (!this.set) {
+        try {
+          this.set = new Set(JSON.parse(sessionStorage.getItem(this.key) || '[]'));
+        } catch (_) {
+          this.set = new Set();
+        }
+      }
+      return this.set;
+    },
+    has(k) {
+      return this.load().has(k);
+    },
+    add(k) {
+      this.load().add(k);
+      this.save();
+    },
+    remove(k) {
+      this.load().delete(k);
+      this.save();
+    },
+    save() {
+      try {
+        sessionStorage.setItem(this.key, JSON.stringify(Array.from(this.set)));
+      } catch (_) {}
+    },
+  };
+
+  // ===== 6. Instellingen =====
   const Settings = {
     data: { ...CONFIG.defaults },
     load() {
@@ -342,7 +381,7 @@
     },
   };
 
-  // ===== 6. Geluid (WebAudio, geen bestanden nodig; standaard uit) =====
+  // ===== 7. Geluid (WebAudio; standaard uit) =====
   const Sound = {
     ctx: null,
     ensure() {
@@ -375,348 +414,132 @@
     },
   };
 
-  // ===== 7. UI (Shadow DOM zodat site-CSS en onze CSS elkaar niet raken) =====
-  const STYLES = `
-    :host{all:initial}
+  // ===== 8. Pagina-CSS: kaarten neutraal houden zolang ze vergrendeld zijn =====
+  // (de kaartkleur - geel/blauw/groen - zou anders de score verraden)
+  const PageCss = {
+    mount() {
+      if (document.getElementById('ss-crate-page-css')) return;
+      const s = document.createElement('style');
+      s.id = 'ss-crate-page-css';
+      s.textContent =
+        '[data-ssc-locked]{background:#eef0f5 !important;border-color:#d7dbe6 !important;box-shadow:none !important}';
+      (document.head || document.documentElement).appendChild(s);
+    },
+    unmount() {
+      const s = document.getElementById('ss-crate-page-css');
+      if (s) s.remove();
+    },
+  };
+
+  // ===== 9. Crate-widget (Shadow DOM, per resultaat) =====
+  const WIDGET_CSS = `
+    :host{display:block;all:initial;display:block}
     *{box-sizing:border-box}
-    .root{position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;
-      font-family:'Segoe UI',system-ui,-apple-system,Roboto,sans-serif;color:#e8ecf8;overflow:hidden;
-      background:radial-gradient(1200px 700px at 50% 0%,#1a1f3a 0%,#0b0d1a 55%,#05060d 100%);
-      animation:fade .4s ease both}
-    .root.hidden{display:none}
-    @keyframes fade{from{opacity:0}to{opacity:1}}
-    .grid{position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),
-      linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px);background-size:48px 48px;
-      mask-image:radial-gradient(circle at 50% 40%,#000 0%,transparent 70%);-webkit-mask-image:radial-gradient(circle at 50% 40%,#000 0%,transparent 70%)}
-    .glow{position:absolute;width:640px;height:640px;border-radius:50%;filter:blur(120px);opacity:.35;
-      background:var(--accent,#8847ff);top:50%;left:50%;transform:translate(-50%,-50%);transition:background 1s}
-    .panel{position:relative;width:min(1100px,94vw);padding:34px 28px 30px;border-radius:24px;text-align:center;
-      background:linear-gradient(160deg,rgba(255,255,255,.08),rgba(255,255,255,.02));
-      border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
-      box-shadow:0 30px 80px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.12)}
-    .eyebrow{font-size:13px;letter-spacing:.35em;text-transform:uppercase;color:#8d97c4;font-weight:600}
-    h1{margin:10px 0 6px;font-size:clamp(28px,5vw,46px);font-weight:800;letter-spacing:.02em;
-      background:linear-gradient(90deg,#fff,#b9c4ff);-webkit-background-clip:text;background-clip:text;color:transparent}
-    p.sub{margin:0 0 22px;color:#9aa4cf;font-size:16px}
-    .btn{cursor:pointer;border:0;border-radius:14px;padding:16px 38px;font:800 18px/1 inherit;letter-spacing:.12em;
-      text-transform:uppercase;color:#fff;background:linear-gradient(135deg,#8847ff,#d32ce6);
-      box-shadow:0 10px 30px rgba(136,71,255,.45),inset 0 1px 0 rgba(255,255,255,.3);
-      transition:transform .15s,box-shadow .15s,filter .15s;font-family:inherit}
-    .btn:hover{transform:translateY(-2px) scale(1.03);box-shadow:0 14px 40px rgba(211,44,230,.55),inset 0 1px 0 rgba(255,255,255,.3)}
-    .btn:active{transform:scale(.98)}
-    .btn.ghost{background:rgba(255,255,255,.07);box-shadow:inset 0 0 0 1px rgba(255,255,255,.18);font-size:14px;padding:13px 24px}
-    .btn.ghost:hover{background:rgba(255,255,255,.14);box-shadow:inset 0 0 0 1px rgba(255,255,255,.3)}
-    .crate{width:170px;height:170px;margin:0 auto 6px;animation:float 3.2s ease-in-out infinite;
-      filter:drop-shadow(0 0 28px rgba(136,71,255,.65))}
-    @keyframes float{50%{transform:translateY(-10px) rotate(-1.5deg)}}
-    .lock{display:inline-flex;gap:8px;align-items:center;font-size:13px;letter-spacing:.3em;font-weight:700;
-      color:#ffcf66;background:rgba(255,207,102,.1);border:1px solid rgba(255,207,102,.3);padding:7px 16px;border-radius:99px;margin-bottom:12px}
-    .view{display:none}.view.active{display:block;animation:fade .35s ease both}
-
-    /* roulette */
-    .roulette{position:relative;margin:26px 0 8px;height:200px;border-radius:16px;overflow:hidden;
-      background:linear-gradient(180deg,rgba(0,0,0,.55),rgba(0,0,0,.25));
-      border:1px solid rgba(255,255,255,.1);box-shadow:inset 0 0 60px rgba(0,0,0,.7)}
-    .roulette:before,.roulette:after{content:'';position:absolute;top:0;bottom:0;width:22%;z-index:3;pointer-events:none}
-    .roulette:before{left:0;background:linear-gradient(90deg,#0a0c18,transparent)}
-    .roulette:after{right:0;background:linear-gradient(270deg,#0a0c18,transparent)}
-    .strip{position:absolute;top:0;left:0;height:100%;display:flex;align-items:center;gap:var(--gap);padding:0 0;will-change:transform}
-    .tile{flex:0 0 var(--tw);height:160px;border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;
-      position:relative;background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(0,0,0,.35));
-      border:1px solid rgba(255,255,255,.1);overflow:hidden}
-    .tile:before{content:'';position:absolute;inset:auto 0 0 0;height:5px;background:var(--c)}
-    .tile:after{content:'';position:absolute;inset:0;background:radial-gradient(circle at 50% 100%,var(--c),transparent 70%);opacity:.28}
-    .tile b{position:relative;z-index:1;font-size:36px;font-weight:800;text-shadow:0 0 18px var(--c);color:#fff}
-    .tile small{max-width:92%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:relative;z-index:1;margin-top:6px;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--c);font-weight:700}
-    .tile.win.lit{box-shadow:0 0 0 2px var(--c),0 0 40px var(--c);animation:pop .6s ease both}
-    @keyframes pop{50%{transform:scale(1.12)}}
-    .marker{position:absolute;top:-4px;bottom:-4px;left:50%;width:4px;margin-left:-2px;z-index:4;
-      background:linear-gradient(180deg,#ffe27a,#ff9f1a);box-shadow:0 0 16px #ffb22e,0 0 40px rgba(255,178,46,.7);border-radius:3px}
-    .marker:before,.marker:after{content:'';position:absolute;left:50%;margin-left:-9px;border:9px solid transparent}
-    .marker:before{top:0;border-top-color:#ffb22e}
-    .marker:after{bottom:0;border-bottom-color:#ffb22e}
-    .status{height:26px;color:#9aa4cf;letter-spacing:.2em;text-transform:uppercase;font-size:13px;font-weight:600}
-
-    /* reveal */
-    .score-big{font-size:clamp(64px,13vw,120px);font-weight:900;line-height:1;margin:6px 0 4px;color:#fff;
-      text-shadow:0 0 40px var(--accent),0 0 90px var(--accent);animation:zoom .7s cubic-bezier(.2,1.4,.4,1) both}
-    @keyframes zoom{from{transform:scale(.4);opacity:0}}
-    .tier{display:inline-block;padding:6px 16px;border-radius:99px;font-size:13px;letter-spacing:.25em;text-transform:uppercase;font-weight:800;
-      color:var(--accent);border:1px solid var(--accent);background:rgba(255,255,255,.05);margin-bottom:18px}
-    .actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:6px}
-    canvas.confetti{position:absolute;inset:0;pointer-events:none;z-index:6}
-
-    /* settings */
-    .gear{position:absolute;top:18px;right:18px;z-index:10}
-    .gear>button{width:44px;height:44px;border-radius:50%;cursor:pointer;border:1px solid rgba(255,255,255,.18);
-      background:rgba(255,255,255,.08);color:#fff;font-size:20px;backdrop-filter:blur(10px);transition:transform .3s,background .2s}
-    .gear>button:hover{background:rgba(255,255,255,.18);transform:rotate(60deg)}
-    .menu{position:absolute;right:0;top:54px;width:270px;padding:16px;border-radius:16px;text-align:left;display:none;
-      background:rgba(14,17,34,.92);border:1px solid rgba(255,255,255,.14);backdrop-filter:blur(18px);box-shadow:0 20px 50px rgba(0,0,0,.6)}
-    .menu.open{display:block;animation:fade .2s ease both}
-    .row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;font-size:14px;color:#cfd6f5}
-    .row+.row{border-top:1px solid rgba(255,255,255,.07)}
-    .sw{position:relative;width:44px;height:24px;border-radius:99px;background:#2a2f4d;cursor:pointer;border:0;transition:background .2s}
-    .sw:after{content:'';position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:transform .2s}
-    .sw.on{background:#8847ff}.sw.on:after{transform:translateX(20px)}
-    select{background:#1b1f3a;color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:6px 8px;font:inherit}
-    .menu .btn{width:100%;margin-top:8px;padding:11px;font-size:12px}
-
-    /* floating knop zodra origineel resultaat getoond wordt */
-    .fab{position:fixed;right:20px;bottom:20px;z-index:2147483647;display:none;cursor:pointer;border:0;border-radius:99px;
-      padding:12px 18px;font:700 13px/1 'Segoe UI',system-ui,sans-serif;letter-spacing:.1em;color:#fff;
-      background:linear-gradient(135deg,#8847ff,#d32ce6);box-shadow:0 8px 24px rgba(136,71,255,.5)}
-    .fab.show{display:block}
-    .list{display:grid;gap:10px;max-height:min(46vh,420px);overflow:auto;padding:4px;margin:6px 0 18px;text-align:left}
-    .card{text-align:left;display:flex;align-items:center;gap:14px;cursor:pointer;font:inherit;color:#e8ecf8;padding:14px 18px;border-radius:14px;
-      background:linear-gradient(135deg,rgba(255,255,255,.07),rgba(255,255,255,.02));border:1px solid rgba(255,255,255,.12);
-      border-left:4px solid var(--c);transition:transform .15s,background .15s,box-shadow .15s}
-    .card:hover{transform:translateX(4px);background:rgba(255,255,255,.12);box-shadow:0 0 24px color-mix(in srgb,var(--c) 40%,transparent)}
-    .card .ico{font-size:22px}
-    .card .txt{flex:1;display:flex;flex-direction:column;gap:3px;min-width:0}
-    .card .txt b{font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .card .txt small{color:#8d97c4;font-size:12px;letter-spacing:.08em;text-transform:uppercase}
-    .card .val{font-size:22px;font-weight:800;color:var(--c)}
-    .card:not(.done) .val{opacity:.6;letter-spacing:.1em}
-    .done-subject{display:inline-block;margin-top:8px;padding:6px 18px;border-radius:99px;font-size:15px;font-weight:800;letter-spacing:.14em;
-      text-transform:uppercase;color:#fff;background:linear-gradient(135deg,#8847ff,#d32ce6);box-shadow:0 6px 20px rgba(136,71,255,.45)}
-    .done-subject:empty{display:none}
-    .done-points{margin:2px 0 12px;font-size:clamp(22px,4vw,32px);font-weight:800;color:#e8ecf8;letter-spacing:.04em}
-    .done-points small{display:block;font-size:12px;font-weight:600;color:#8d97c4;letter-spacing:.25em;text-transform:uppercase;margin-top:2px}
-    .done-points:empty{display:none}
-    .done-title{margin-top:4px;font-size:18px;font-weight:700;color:#cfd6f5}
-    @media (max-width:640px){.panel{padding:24px 14px}.roulette{height:170px}.tile{height:130px}.tile b{font-size:28px}}
-    @media (prefers-reduced-motion:reduce){.crate{animation:none}}
+    .crate{margin:8px 0;padding:8px 10px 10px;border-radius:12px;text-align:center;color:#e8ecf8;
+      font-family:'Segoe UI',system-ui,-apple-system,Roboto,sans-serif;
+      background:linear-gradient(180deg,#1c2230,#10141c);border:1px solid rgba(255,255,255,.07);
+      box-shadow:0 6px 18px rgba(0,0,0,.25),inset 0 1px 0 rgba(255,255,255,.06)}
+    .label{font-size:10px;letter-spacing:.28em;font-weight:800;color:#8d97c4;text-transform:uppercase}
+    .window{position:relative;margin:7px auto 8px;width:min(310px,100%);height:58px;overflow:hidden;border-radius:9px;
+      background:#0b0e14;border:1px solid rgba(255,255,255,.12)}
+    .window:before,.window:after{content:'';position:absolute;top:0;bottom:0;width:20%;z-index:2;pointer-events:none}
+    .window:before{left:0;background:linear-gradient(90deg,#0b0e14,transparent)}
+    .window:after{right:0;background:linear-gradient(270deg,#0b0e14,transparent)}
+    .strip{position:absolute;top:0;left:0;height:100%;display:flex;align-items:center;gap:var(--gap);padding-left:6px;will-change:transform}
+    .tile{flex:0 0 var(--tw);height:44px;border-radius:7px;display:flex;align-items:center;justify-content:center;
+      background:linear-gradient(180deg,#323a4b,#232937);border-bottom:3px solid var(--c);
+      font-weight:800;font-size:14px;color:#fff;text-shadow:0 0 10px var(--c)}
+    .tile.win.lit{box-shadow:0 0 0 2px var(--c),0 0 18px var(--c)}
+    .marker{position:absolute;top:0;bottom:0;left:50%;width:3px;margin-left:-1.5px;z-index:3;border-radius:2px;
+      background:linear-gradient(180deg,#ffe27a,#ff9f1a);box-shadow:0 0 10px #ffb22e}
+    .btn{cursor:pointer;border:1px solid rgba(255,255,255,.28);border-radius:8px;padding:5px 14px;font:800 10.5px/1 inherit;
+      letter-spacing:.14em;text-transform:uppercase;color:#fff;background:rgba(255,255,255,.1);font-family:inherit;transition:background .15s,transform .1s}
+    .btn:hover:not([disabled]){background:rgba(255,255,255,.2);transform:translateY(-1px)}
+    .btn.go{border-color:#ffd25e;color:#ffe9a8;background:rgba(255,200,70,.14)}
+    .btn[disabled]{cursor:default;color:#ffe9a8;border-color:#ffd25e}
+    .rv{display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;padding:6px 4px 4px;animation:pop .5s cubic-bezier(.2,1.4,.4,1) both}
+    @keyframes pop{from{transform:scale(.85);opacity:0}}
+    .subj{padding:4px 12px;border-radius:99px;font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;
+      background:linear-gradient(135deg,#8847ff,#d32ce6);color:#fff}
+    .subj:empty{display:none}
+    .pts{font-size:20px;font-weight:800}
+    .pct{font-size:28px;font-weight:900;color:#fff;text-shadow:0 0 18px var(--c)}
+    .tier{font-size:10px;font-weight:800;letter-spacing:.22em;text-transform:uppercase;color:var(--c);border:1px solid var(--c);padding:3px 9px;border-radius:99px}
+    .crate.done{border-color:var(--c);box-shadow:0 0 22px color-mix(in srgb,var(--c) 35%,transparent),0 6px 18px rgba(0,0,0,.25)}
   `;
 
-  const CRATE_SVG = `
-    <svg class="crate" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3a4170"/><stop offset="1" stop-color="#151833"/></linearGradient>
-        <linearGradient id="g2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe27a"/><stop offset="1" stop-color="#ff9f1a"/></linearGradient>
-      </defs>
-      <path d="M60 8 108 30v60L60 112 12 90V30z" fill="url(#g1)" stroke="#8847ff" stroke-width="2.5"/>
-      <path d="M12 30 60 52l48-22M60 52v60" fill="none" stroke="#8847ff" stroke-width="2.5" opacity=".8"/>
-      <rect x="50" y="60" width="20" height="26" rx="4" fill="url(#g2)"/>
-      <circle cx="60" cy="71" r="3.5" fill="#1a1020"/>
-      <path d="M60 8 108 30 60 52 12 30z" fill="#232853" stroke="#8847ff" stroke-width="2"/>
-    </svg>`;
-
-  class CrateUI {
-    constructor(results, rescan) {
-      this.results = results;
-      this.rescan = rescan; // () => results[] - leest "live" opnieuw bij het openen
-      this.current = null;
-      this.opened = new Set();
-      this.state = 'pick';
+  class CrateWidget {
+    constructor(r, manager) {
+      this.m = manager;
+      this.r = r;
+      this.key = r.key;
+      this.state = 'idle';
       this.raf = 0;
-      this.build();
-    }
-
-    $(sel) {
-      return this.shadow.querySelector(sel);
-    }
-
-    build() {
+      this.hidden = [];
       this.host = document.createElement('div');
       this.host.setAttribute('data-ss-crate', '');
       this.shadow = this.host.attachShadow({ mode: 'open' });
-      const speedOpts = CONFIG.speeds
-        .map((s) => `<option value="${s.value}">${s.label}</option>`)
-        .join('');
-      this.shadow.innerHTML = `
-        <style>${STYLES}</style>
-        <div class="root" part="root">
-          <div class="grid"></div><div class="glow"></div>
-          <div class="gear">
-            <button class="gear-btn" title="Settings" aria-label="Settings">\u2699</button>
-            <div class="menu">
-              <div class="row"><span>\ud83d\udd0a Sound effects</span><button class="sw" data-k="sound" aria-label="Sound"></button></div>
-              <div class="row"><span>\u26a1 Animation speed</span><select data-k="speed">${speedOpts}</select></div>
-              <button class="btn ghost" data-a="reopen">\ud83d\udd04 Reopen crate</button>
-              <button class="btn ghost" data-a="original">\ud83d\udc41 Show original results</button>
-            </div>
-          </div>
-          <div class="panel">
-            <div class="view v-pick active">
-              <div class="eyebrow">Smartschool \u00b7 Results</div>
-              <h1>Choose a crate</h1>
-              <p class="sub">Every result is sealed in its own crate. <span class="pick-count"></span></p>
-              <div class="list"></div>
-              <div class="actions"><button class="btn ghost" data-a="original">\ud83d\udc41 Show original results</button></div>
-            </div>
-            <div class="view v-locked">
-              ${CRATE_SVG}
-              <div class="lock">\ud83d\udd12 SCORE LOCKED</div>
-              <h1 class="crate-title">Open your crate</h1>
-              <p class="sub crate-sub"></p>
-              <div class="actions">
-                <button class="btn" data-a="open">Open crate</button>
-                <button class="btn ghost" data-a="back">\u2190 All results</button>
-              </div>
-            </div>
-            <div class="view v-spin">
-              <div class="eyebrow">Opening crate</div>
-              <div class="roulette"><div class="strip"></div><div class="marker"></div></div>
-              <div class="status">Rolling\u2026</div>
-            </div>
-            <div class="view v-done">
-              <div class="eyebrow">\ud83c\udf89 Crate opened!</div>
-              <div class="done-subject"></div>
-              <div class="done-title"></div>
-              <div class="score-big"></div>
-              <div class="done-points"></div>
-              <div class="tier"></div>
-              <div class="sub-line"></div>
-              <div class="actions">
-                <button class="btn" data-a="back">Open another crate</button>
-                <button class="btn ghost" data-a="original">Show original results</button>
-                <button class="btn ghost" data-a="reopen">\ud83d\udd04 Reopen crate</button>
-              </div>
-            </div>
-          </div>
-        </div>
-        <button class="fab" data-a="crate">\ud83c\udf81 CRATE</button>`;
-      whenBodyReady(() => document.body.appendChild(this.host));
-
-      this.root = this.$('.root');
-      this.fab = this.$('.fab');
       this.shadow.addEventListener('click', (e) => this.onClick(e));
-      this.shadow.addEventListener('change', (e) => {
-        if (e.target.dataset.k === 'speed') Settings.set('speed', parseFloat(e.target.value));
+      this.place();
+      if (Opened.has(this.key)) this.showResult(false);
+      else this.showIdle();
+    }
+
+    $(s) {
+      return this.shadow.querySelector(s);
+    }
+
+    /** Naast de kaart (lijst) of direct onder de cirkel (groot detailpaneel) plaatsen. */
+    place() {
+      const row = this.r.el;
+      const tall = row.getBoundingClientRect().height > 260;
+      const targets = ResultsScanner.hideTargets(this.r);
+      const anchor = tall && targets.length ? targets[targets.length - 1] : row;
+      if (this.host.previousElementSibling !== anchor) anchor.insertAdjacentElement('afterend', this.host);
+    }
+
+    update(r) {
+      this.r = r;
+      if (!this.host.isConnected) this.place();
+      if (this.state !== 'revealed' && !this.m.originalMode) this.lockOriginal();
+    }
+
+    // ---- originele score verbergen / terugzetten ----
+    lockOriginal() {
+      this.unlockOriginal();
+      this.r.el.setAttribute('data-ssc-locked', '');
+      ResultsScanner.hideTargets(this.r).forEach((t) => {
+        this.hidden.push([t, t.style.getPropertyValue('visibility'), t.style.getPropertyPriority('visibility')]);
+        t.style.setProperty('visibility', 'hidden', 'important');
       });
-      this.syncSettings();
-      this.renderList();
-      this.lockScroll(true);
     }
 
-    destroy() {
-      cancelAnimationFrame(this.raf);
-      cancelAnimationFrame(this.confettiRaf);
-      this.lockScroll(false);
-      this.host.remove();
+    unlockOriginal() {
+      this.r.el.removeAttribute('data-ssc-locked');
+      this.hidden.forEach(([t, v, p]) => {
+        if (v) t.style.setProperty('visibility', v, p);
+        else t.style.removeProperty('visibility');
+      });
+      this.hidden = [];
     }
 
-    setResults(results) {
-      this.results = results;
-      if (this.current && !results.some((r) => r.id === this.current.id)) this.current = null;
-      this.renderList();
+    // ---- weergave ----
+    chrome(inner, cls = '') {
+      this.shadow.innerHTML = `<style>${WIDGET_CSS}</style><div class="crate ${cls}">${inner}</div>`;
     }
 
-    renderList() {
-      this.$('.list').innerHTML = this.results
-        .map((r, i) => {
-          const done = this.opened.has(r.id);
-          const t = tierFor(r.percent);
-          return `<button class="card${done ? ' done' : ''}" data-a="choose" data-i="${i}" style="--c:${done ? t.color : '#8847ff'}">
-            <span class="ico">${done ? '\ud83d\udd13' : '\ud83d\udd12'}</span>
-            <span class="txt"><b>${esc(r.title)}</b><small>${esc(r.subtitle || (done ? tier(r) : 'Sealed crate'))}</small></span>
-            <span class="val">${done ? fmt(r.percent) : '???'}</span>
-          </button>`;
-        })
-        .join('');
-      const n = this.results.length;
-      this.$('.pick-count').textContent = `${this.opened.size} / ${n} opened`;
-      function tier(r) { return tierFor(r.percent).name; }
-    }
-
-    choose(i) {
-      this.current = this.results[i];
-      this.$('.crate-title').textContent = this.current.title;
-      this.$('.crate-sub').textContent =
-        Store.others(this.current).length === 0
-          ? 'Tip: open the full Results list once, so the crate can use your other real results.'
-          : this.current.subtitle || 'Crack it open to reveal your score.';
-      this.show('locked');
-    }
-
-    syncSettings() {
-      this.$('.sw[data-k="sound"]').classList.toggle('on', !!Settings.data.sound);
-      this.$('select[data-k="speed"]').value = String(Settings.data.speed);
-    }
-
-    lockScroll(on) {
-      if (on) {
-        this._prevOverflow = document.documentElement.style.overflow;
-        document.documentElement.style.overflow = 'hidden';
-      } else {
-        document.documentElement.style.overflow = this._prevOverflow || '';
-      }
-    }
-
-    show(view) {
-      this.state = view;
-      this.shadow.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
-      this.$('.v-' + view).classList.add('active');
-    }
-
-    onClick(e) {
-      const kBtn = e.target.closest('[data-k="sound"]');
-      if (kBtn) {
-        Settings.set('sound', !Settings.data.sound);
-        this.syncSettings();
-        if (Settings.data.sound) Sound.tick();
-        return;
-      }
-      if (e.target.closest('.gear-btn')) return this.$('.menu').classList.toggle('open');
-      const a = e.target.closest('[data-a]');
-      if (!a) return;
-      const act = a.dataset.a;
-      if (act === 'open') this.open();
-      else if (act === 'reopen') this.reopen();
-      else if (act === 'original') this.showOriginal();
-      else if (act === 'crate') this.showCrate();
-      else if (act === 'choose') this.choose(+a.dataset.i);
-      else if (act === 'back') this.backToList();
-      if (act !== 'open') this.$('.menu').classList.remove('open');
-    }
-
-    /* ---- acties ---- */
-    backToList() {
-      cancelAnimationFrame(this.raf);
-      this.clearConfetti();
-      this.root.style.setProperty('--accent', '#8847ff');
-      this.renderList();
-      this.show('pick');
-    }
-
-    reopen() {
-      cancelAnimationFrame(this.raf);
-      this.clearConfetti();
-      this.showCrate();
-      if (this.current) this.show('locked');
-      else this.backToList();
-    }
-
-    showOriginal() {
-      cancelAnimationFrame(this.raf);
-      this.root.classList.add('hidden');
-      this.fab.classList.add('show');
-      this.lockScroll(false);
-    }
-
-    showCrate() {
-      this.root.classList.remove('hidden');
-      this.fab.classList.remove('show');
-      this.lockScroll(true);
-    }
-
-    /* ---- roulette ---- */
-    /** Roulette-items: ALLEEN echte resultaten uit Smartschool. Het winnende item is het gekozen resultaat. */
-    buildStrip(winner) {
-      const { tileCount: n, winnerIndex: wi } = CONFIG;
-      const pool = Store.others(winner);
-      const real = pool.length > 0;
-      const bag = [];
+    /** Echte resultaten (zonder dit resultaat) als tegels; "?" als er nog geen andere bekend zijn. */
+    buildItems(winnerItem) {
+      const pool = Store.others(this.key);
       const items = [];
-      for (let i = 0; i < n; i++) {
-        if (i === wi) {
-          items.push({ title: winner.title, percent: winner.percent, raw: winner.raw });
+      const bag = [];
+      for (let i = 0; i < CONFIG.tileCount; i++) {
+        if (i === CONFIG.winnerIndex) {
+          items.push(winnerItem);
           continue;
         }
-        if (!real) {
-          // Noodgeval (nog geen andere resultaten gezien): neutrale placeholders, zonder titel
-          items.push({ title: '', percent: Math.round(rand(8, 98)) });
+        if (!pool.length) {
+          items.push(null);
           continue;
         }
         if (!bag.length) bag.push(...pool.slice().sort(() => Math.random() - 0.5));
@@ -729,146 +552,278 @@
         }
         items.push(pick);
       }
-      this.fakeFillers = !real;
-      const strip = this.$('.strip');
-      strip.style.setProperty('--tw', CONFIG.tileWidth + 'px');
-      strip.style.setProperty('--gap', CONFIG.tileGap + 'px');
-      strip.innerHTML = items
-        .map((it, i) => {
-          const t = tierFor(it.percent);
-          const label = it.title ? esc(it.title) : t.name;
-          return `<div class="tile${i === wi ? ' win' : ''}" style="--c:${t.color}"><b>${fmt(it.percent)}</b><small>${label}</small></div>`;
-        })
-        .join('');
-      return strip;
+      return { items, hasReal: pool.length > 0 };
     }
 
-    async open() {
+    tilesHtml(items, hideWinner) {
+      return items
+        .map((it, i) => {
+          const isWin = i === CONFIG.winnerIndex;
+          if (!it || (isWin && hideWinner)) {
+            return `<div class="tile${isWin ? ' win' : ''}" style="--c:#b0c3d9">?</div>`;
+          }
+          const t = tierFor(it.percent);
+          return `<div class="tile${isWin ? ' win' : ''}" style="--c:${t.color}" title="${esc(it.title || '')}">${fmt(it.percent)}</div>`;
+        })
+        .join('');
+    }
+
+    showIdle() {
+      this.state = 'idle';
+      this.lockOriginal();
+      const { items } = this.buildItems({ percent: this.r.percent, title: this.r.title, k: this.key });
+      this.chrome(
+        `<div class="label">Result crate</div>
+         <div class="window"><div class="strip" style="--tw:${CONFIG.tileWidth}px;--gap:${CONFIG.tileGap}px">${this.tilesHtml(items, true)}</div><div class="marker"></div></div>
+         <button class="btn go" data-a="open">Click to open</button>`
+      );
+    }
+
+    showResult(animate) {
+      const r = this.r;
+      const t = tierFor(r.percent);
+      this.state = 'revealed';
+      this.unlockOriginal();
+      this.chrome(
+        `<div class="label">Crate opened</div>
+         <div class="rv" style="--c:${t.color};${animate ? '' : 'animation:none'}">
+           <span class="subj">${esc(r.subject || '')}</span>
+           ${r.max ? `<span class="pts">${nl(r.got)} / ${nl(r.max)}</span>` : ''}
+           <span class="pct">${fmt(r.percent)}</span>
+           <span class="tier">${t.name}</span>
+         </div>
+         <div style="margin-top:6px"><button class="btn" data-a="reopen">Reopen crate</button></div>`,
+        'done'
+      );
+      this.$('.crate').style.setProperty('--c', t.color);
+    }
+
+    onClick(e) {
+      const a = e.target.closest('[data-a]');
+      if (!a) return;
+      if (a.dataset.a === 'open') this.open();
+      else if (a.dataset.a === 'reopen') {
+        Opened.remove(this.key);
+        this.m.relock(this.key);
+      }
+    }
+
+    // ---- animatie ----
+    open() {
       if (this.state === 'spinning') return;
-      if (!this.current) return this.backToList();
-      // Opnieuw uit de pagina lezen, zodat de \u00e9chte (actuele) score gebruikt wordt.
-      const live = this.rescan().find((r) => r.id === this.current.id);
-      const found = live || this.current;
-      this.current = found;
+      // Opnieuw uit de pagina lezen, zodat de echte (actuele) score gebruikt wordt.
+      const live = this.m.live(this.key);
+      if (live) this.r = live;
       Sound.ensure();
       this.state = 'spinning';
-      this.show('spin');
-      this.$('.status').textContent = 'Rolling\u2026';
-      this.$('.root').style.setProperty('--accent', '#8847ff');
-
-      const strip = this.buildStrip(found);
-      const wrap = this.$('.roulette');
+      const { items, hasReal } = this.buildItems({ percent: this.r.percent, title: this.r.title, k: this.key });
+      this.chrome(
+        `<div class="label">Result crate</div>
+         <div class="window"><div class="strip" style="--tw:${CONFIG.tileWidth}px;--gap:${CONFIG.tileGap}px">${this.tilesHtml(items, !hasReal)}</div><div class="marker"></div></div>
+         <button class="btn go" disabled>Opening...</button>`
+      );
+      const strip = this.$('.strip');
+      const wrap = this.$('.window');
       const step = CONFIG.tileWidth + CONFIG.tileGap;
       const centre = wrap.clientWidth / 2;
-      // Stopt op een willekeurige plek BINNEN de winnende tile (net als CS): marker ligt altijd erop.
-      const target = CONFIG.winnerIndex * step + CONFIG.tileWidth / 2 + rand(-0.38, 0.38) * CONFIG.tileWidth - centre;
+      const target = CONFIG.winnerIndex * step + 6 + CONFIG.tileWidth / 2 + rand(-0.36, 0.36) * CONFIG.tileWidth - centre;
       const duration = CONFIG.spinBaseMs / Settings.data.speed;
-      // Kleine overshoot-terugtrek aan het eind voor "echt" gevoel.
-      const overshoot = rand(0.12, 0.3) * CONFIG.tileWidth;
-      const peak = target + overshoot;
+      const peak = target + rand(0.12, 0.3) * CONFIG.tileWidth;
       const easeOut = (t) => 1 - Math.pow(1 - t, 4.2);
-      let lastTick = -1;
+      let last = -1;
       const t0 = performance.now();
-
       const frame = (now) => {
         const t = clamp((now - t0) / duration, 0, 1);
         let x;
         if (t < 0.93) x = peak * easeOut(t / 0.93);
         else {
-          const k = (t - 0.93) / 0.07; // laatste 7%: zachte terugslag naar doel
+          const k = (t - 0.93) / 0.07;
           x = peak + (target - peak) * (1 - Math.pow(1 - k, 3));
         }
         strip.style.transform = `translate3d(${-x}px,0,0)`;
         const idx = Math.floor((x + centre) / step);
-        if (idx !== lastTick) {
-          if (lastTick !== -1) Sound.tick();
-          lastTick = idx;
+        if (idx !== last) {
+          if (last !== -1) Sound.tick();
+          last = idx;
         }
         if (t < 1) this.raf = requestAnimationFrame(frame);
-        else this.finish(found.percent);
+        else this.finish(hasReal);
       };
       this.raf = requestAnimationFrame(frame);
     }
 
-    finish(percent) {
-      const tier = tierFor(percent);
-      this.opened.add(this.current.id);
-      this.$('.status').textContent = 'Unboxing\u2026';
+    finish(hasReal) {
       const win = this.$('.tile.win');
-      win.classList.add('lit');
-      this.$('.root').style.setProperty('--accent', tier.color);
+      if (win) {
+        // Bij "?"-tegels pas nu het echte percentage tonen
+        if (!hasReal) win.textContent = fmt(this.r.percent);
+        win.classList.add('lit');
+      }
       Sound.win();
       setTimeout(() => {
-        this.$('.score-big').textContent = fmt(percent);
-        this.$('.tier').textContent = tier.name;
-        const c = this.current;
-        const nl = (n) => String(n).replace('.', ',');
-        this.$('.done-subject').textContent = c.subject || '';
-        this.$('.done-title').textContent = c.title;
-        const pts = this.$('.done-points');
-        pts.textContent = '';
-        if (c.max) {
-          pts.textContent = `${nl(c.got)} / ${nl(c.max)}`;
-          const sm = document.createElement('small');
-          sm.textContent = 'points';
-          pts.appendChild(sm);
-        }
-        this.$('.sub-line').innerHTML = '<p class="sub">Your score</p>';
-        this.show('done');
-        this.confetti(tier.color);
-        this.state = 'revealed';
-      }, 1300);
+        Opened.add(this.key);
+        this.m.revealKey(this.key, this);
+      }, 900);
     }
 
-    /* ---- confetti (lichte canvas-animatie) ---- */
-    confetti(color) {
-      this.clearConfetti();
-      const cv = document.createElement('canvas');
-      cv.className = 'confetti';
-      this.root.appendChild(cv);
-      const ctx = cv.getContext('2d');
-      const W = (cv.width = this.root.clientWidth);
-      const H = (cv.height = this.root.clientHeight);
-      const palette = [color, '#ffe27a', '#ffffff', '#d32ce6', '#4b69ff'];
-      const parts = Array.from({ length: 140 }, () => ({
-        x: W / 2,
-        y: H * 0.45,
-        vx: rand(-9, 9),
-        vy: rand(-16, -4),
-        s: rand(5, 10),
-        r: rand(0, 6),
-        vr: rand(-0.3, 0.3),
-        c: palette[(Math.random() * palette.length) | 0],
-      }));
-      let frames = 0;
-      const tick = () => {
-        ctx.clearRect(0, 0, W, H);
-        parts.forEach((p) => {
-          p.vy += 0.35;
-          p.x += p.vx;
-          p.y += p.vy;
-          p.r += p.vr;
-          ctx.save();
-          ctx.translate(p.x, p.y);
-          ctx.rotate(p.r);
-          ctx.fillStyle = p.c;
-          ctx.fillRect(-p.s / 2, -p.s / 4, p.s, p.s / 2);
-          ctx.restore();
-        });
-        if (++frames < 200 && cv.isConnected) this.confettiRaf = requestAnimationFrame(tick);
-        else cv.remove();
-      };
-      tick();
-    }
-
-    clearConfetti() {
-      cancelAnimationFrame(this.confettiRaf);
-      this.shadow.querySelectorAll('canvas.confetti').forEach((c) => c.remove());
+    destroy() {
+      cancelAnimationFrame(this.raf);
+      this.unlockOriginal();
+      this.host.remove();
     }
   }
 
-  // ===== 8. Boot + SPA-navigatie: UI verschijnt alleen op de Resultaten-pagina =====
-  /** Klein label linksonder: laat zien dat het script draait en wat het op de pagina vond. */
+  // ===== 10. Kleine instellingenknop =====
+  const SETTINGS_CSS = `
+    *{box-sizing:border-box}
+    .wrap{position:fixed;right:18px;bottom:18px;z-index:2147483646;font-family:'Segoe UI',system-ui,sans-serif;color:#e8ecf8}
+    .gear{width:42px;height:42px;border-radius:50%;cursor:pointer;border:1px solid rgba(255,255,255,.2);background:#1c2230;color:#fff;font-size:19px;
+      box-shadow:0 6px 20px rgba(0,0,0,.4)}
+    .menu{display:none;position:absolute;right:0;bottom:52px;width:260px;padding:14px;border-radius:14px;background:#141824;
+      border:1px solid rgba(255,255,255,.14);box-shadow:0 14px 40px rgba(0,0,0,.5)}
+    .menu.open{display:block}
+    .row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;font-size:13px}
+    .row+.row,.row+button,button+button{margin-top:4px}
+    .sw{position:relative;width:42px;height:22px;border-radius:99px;background:#2a2f4d;cursor:pointer;border:0}
+    .sw:after{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform .2s}
+    .sw.on{background:#8847ff}.sw.on:after{transform:translateX(20px)}
+    select{background:#1b1f3a;color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:5px 7px;font:inherit}
+    .b{width:100%;cursor:pointer;margin-top:6px;padding:9px;border-radius:9px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.07);color:#fff;font:700 12px inherit;letter-spacing:.06em}
+    .b:hover{background:rgba(255,255,255,.16)}
+  `;
+
+  class SettingsPanel {
+    constructor(manager) {
+      this.m = manager;
+      this.host = document.createElement('div');
+      this.host.setAttribute('data-ss-crate', '');
+      this.shadow = this.host.attachShadow({ mode: 'open' });
+      const speeds = CONFIG.speeds.map((s) => `<option value="${s.value}">${s.label}</option>`).join('');
+      this.shadow.innerHTML = `<style>${SETTINGS_CSS}</style>
+        <div class="wrap">
+          <div class="menu">
+            <div class="row"><span>\u{1F50A} Sound effects</span><button class="sw" data-k="sound" aria-label="Sound"></button></div>
+            <div class="row"><span>\u26a1 Animation speed</span><select data-k="speed">${speeds}</select></div>
+            <button class="b" data-a="reopen">\u{1F504} Reopen all crates</button>
+            <button class="b" data-a="original">\u{1F441} Show original results</button>
+          </div>
+          <button class="gear" aria-label="Crate settings" title="Crate settings">\u2699</button>
+        </div>`;
+      this.shadow.addEventListener('click', (e) => this.onClick(e));
+      this.shadow.addEventListener('change', (e) => {
+        if (e.target.dataset.k === 'speed') Settings.set('speed', parseFloat(e.target.value));
+      });
+      this.sync();
+      whenBodyReady(() => document.body.appendChild(this.host));
+    }
+
+    sync() {
+      this.shadow.querySelector('.sw').classList.toggle('on', !!Settings.data.sound);
+      this.shadow.querySelector('select').value = String(Settings.data.speed);
+      this.shadow.querySelector('[data-a="original"]').textContent = this.m.originalMode
+        ? '\u{1F381} Show crates'
+        : '\u{1F441} Show original results';
+    }
+
+    onClick(e) {
+      if (e.target.closest('.gear')) return this.shadow.querySelector('.menu').classList.toggle('open');
+      if (e.target.closest('[data-k="sound"]')) {
+        Settings.set('sound', !Settings.data.sound);
+        if (Settings.data.sound) Sound.tick();
+        return this.sync();
+      }
+      const a = e.target.closest('[data-a]');
+      if (!a) return;
+      if (a.dataset.a === 'reopen') this.m.reopenAll();
+      else if (a.dataset.a === 'original') this.m.setOriginalMode(!this.m.originalMode);
+      this.sync();
+    }
+
+    destroy() {
+      this.host.remove();
+    }
+  }
+
+  // ===== 11. Manager: houdt de crates in sync met de pagina =====
+  const Manager = {
+    crates: new Map(), // rij-element -> CrateWidget
+    originalMode: false,
+    panel: null,
+    results: [],
+
+    sync(results) {
+      this.results = results;
+      PageCss.mount();
+      if (!this.panel) this.panel = new SettingsPanel(this);
+      // verdwenen rijen opruimen
+      this.crates.forEach((c, el) => {
+        if (!el.isConnected || !results.some((r) => r.el === el)) {
+          c.destroy();
+          this.crates.delete(el);
+        }
+      });
+      results.forEach((r) => {
+        const c = this.crates.get(r.el);
+        if (c) {
+          if (c.key !== r.key) {
+            c.destroy();
+            this.crates.delete(r.el);
+          } else return c.update(r);
+        }
+        const w = new CrateWidget(r, this);
+        if (this.originalMode) this.applyMode(w);
+        this.crates.set(r.el, w);
+      });
+    },
+
+    live(key) {
+      return ResultsScanner.scan().find((r) => r.key === key) || null;
+    },
+
+    /** Een crate is open: alle widgets met hetzelfde resultaat (lijst + detail) tonen het resultaat. */
+    revealKey(key, origin) {
+      this.crates.forEach((c) => {
+        if (c.key !== key) return;
+        if (c !== origin) c.r = origin.r;
+        c.showResult(c === origin);
+      });
+    },
+
+    relock(key) {
+      this.crates.forEach((c) => c.key === key && c.showIdle());
+    },
+
+    reopenAll() {
+      this.crates.forEach((c) => Opened.remove(c.key));
+      this.setOriginalMode(false);
+      this.crates.forEach((c) => c.showIdle());
+    },
+
+    applyMode(c) {
+      if (this.originalMode) {
+        c.unlockOriginal();
+        c.host.style.display = 'none';
+      } else {
+        c.host.style.display = '';
+        if (c.state !== 'revealed') c.lockOriginal();
+      }
+    },
+
+    setOriginalMode(on) {
+      this.originalMode = on;
+      this.crates.forEach((c) => this.applyMode(c));
+    },
+
+    destroy() {
+      this.crates.forEach((c) => c.destroy());
+      this.crates.clear();
+      if (this.panel) this.panel.destroy();
+      this.panel = null;
+      PageCss.unmount();
+    },
+  };
+
+  // ===== 12. Label linksonder: laat zien dat het script draait =====
   function badge(text, ok) {
     let host = document.querySelector('[data-ss-crate-badge]');
     if (!host) {
@@ -880,24 +835,24 @@
       document.body.appendChild(host);
     }
     const d = host.shadowRoot.querySelector('div');
-    d.textContent = '\ud83c\udf81 Crate Opener: ' + text;
+    d.textContent = '\u{1F381} Crate Opener: ' + text;
     d.style.background = ok ? '#2e9e5b' : '#c2410c';
     d.style.opacity = '1';
     clearTimeout(badge.t);
     badge.t = setTimeout(() => (d.style.opacity = '0'), 6000);
   }
 
+  // ===== 13. Boot + SPA-navigatie: alleen actief op de Resultaten-pagina =====
   const App = {
-    ui: null,
     timer: 0,
+    mounted: false,
 
     start() {
-      if (window.top !== window.self) return; // niet in iframes
-      log('v2.4.0 geladen op', location.href);
+      if (window.top !== window.self) return;
+      log('v3.0.0 geladen op', location.href);
       Settings.load();
-      if (PageGate.urlLooksLikeResults() && !App.ui) PendingGuard.on();
+      if (PageGate.urlLooksLikeResults()) PendingGuard.on();
 
-      // History-API haken (pushState/replaceState vuren geen event af)
       ['pushState', 'replaceState'].forEach((fn) => {
         const orig = history[fn];
         history[fn] = function () {
@@ -909,14 +864,12 @@
       window.addEventListener('popstate', () => this.schedule());
       window.addEventListener('hashchange', () => this.schedule());
       whenBodyReady(() => {
-        // Smartschool laadt delen van de pagina dynamisch -> DOM observeren
         new MutationObserver((muts) => {
           if (muts.every((m) => m.target.closest && m.target.closest('[data-ss-crate]'))) return;
           this.schedule();
         }).observe(document.body, { childList: true, subtree: true, characterData: true });
         this.schedule(0);
       });
-      // Vangnet: nooit blijvend verborgen
       setTimeout(() => PendingGuard.off(), CONFIG.failSafeRevealMs);
     },
 
@@ -926,42 +879,31 @@
     },
 
     check() {
-      const onResults = PageGate.isResultsPage();
-      if (!onResults) {
-        if (this.ui) this.unmount();
+      if (!PageGate.isResultsPage()) {
+        if (this.mounted) {
+          Manager.destroy();
+          this.mounted = false;
+        }
         PendingGuard.off();
         return;
       }
       const results = ResultsScanner.scan();
       window.__ssCrate = { results, scan: () => ResultsScanner.scan(), cells: () => ResultsScanner.scoreCells() };
       Store.add(results);
-      if (!results.length && this.ui) return; // tussentijdse herrender van de site: UI laten staan
       if (!results.length) {
+        if (this.mounted) return; // tussentijdse herrender van de site
         log('Resultaten-pagina, maar geen scores gevonden. Score-cellen:', ResultsScanner.scoreCells().length);
         badge('actief, maar geen scores herkend', false);
-        // Resultaten zijn mogelijk nog aan het laden; pagina blijft normaal zichtbaar.
         PendingGuard.off();
         return;
       }
-      if (this.ui) {
-        // Al gemount: alleen de lijst verversen als de resultaten echt veranderd zijn
-        if (ResultsScanner.signature(results) !== this.sig) {
-          this.sig = ResultsScanner.signature(results);
-          this.ui.setResults(results);
-        }
-        return;
+      if (!this.mounted) {
+        log('Resultaten-pagina gedetecteerd:', results.map((r) => `${r.title} ${r.raw}`));
+        badge(`${results.length} resultaat${results.length === 1 ? '' : 'en'} herkend`, true);
+        this.mounted = true;
       }
-      this.sig = ResultsScanner.signature(results);
-      log('Resultaten-pagina gedetecteerd:', results.map((r) => `${r.title} ${r.raw}`));
-      badge(`${results.length} resultaat${results.length === 1 ? '' : 'en'} herkend`, true);
-      this.ui = new CrateUI(results, () => ResultsScanner.scan());
+      Manager.sync(results);
       PendingGuard.off();
-    },
-
-    unmount() {
-      this.ui.destroy();
-      this.ui = null;
-      this.sig = '';
     },
   };
 
