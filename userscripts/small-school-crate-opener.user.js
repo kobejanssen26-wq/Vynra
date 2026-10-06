@@ -1,13 +1,10 @@
 // ==UserScript==
-// @name         Small School CS:GO Crate Opener
+// @name         Smartschool CS:GO Crate Opener
 // @namespace    https://github.com/kobejanssen26-wq/vynra
 // @version      1.0.0
-// @description  CS:GO-style crate opening animation for Small School results
+// @description  CS:GO-style crate opening animation for Smartschool results
 // @author       Vynra
-// @match        *://*.smallschool.nl/*
-// @match        *://*.smallschool.com/*
-// @match        *://*.smallschool.app/*
-// @match        *://smallschool.*/*
+// @match        https://*.smartschool.be/*
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
@@ -16,7 +13,7 @@
  * INSTALLATIE
  *   1. Installeer Tampermonkey, maak een nieuw script en plak dit bestand erin
  *      (of open de "raw" URL van dit bestand: Tampermonkey biedt dan zelf Install aan).
- *   2. Controleer dat de @match-regels hierboven overeenkomen met jouw Small School-URL.
+ *   2. Controleer dat de @match-regels hierboven overeenkomen met jouw Smartschool-URL.
  *      Staat je URL er niet bij? Voeg een regel toe, bv.  // @match  https://jouwdomein.nl/resultaat/*
  *   3. Werkt de score-detectie niet? Zet CONFIG.scoreSelector op de CSS-selector van het
  *      element dat de score toont (rechtsklik op de score -> Inspect). Zie CONFIG hieronder.
@@ -39,7 +36,7 @@
 
     // Optioneel: alleen draaien als de URL hierop matcht (regex). Leeg = altijd (binnen @match).
     // Voorbeeld: /result|resultaat|score|uitslag/i
-    urlPattern: null,
+    urlPattern: /\/results|\/skore|resultaten|uitslag/i,
 
     // Trefwoorden die helpen de score te herkennen (class/id/omliggende tekst).
     scoreKeywords: /score|result|resultaat|uitslag|percent|procent|punten|points|grade|cijfer|behaald|correct|goed/i,
