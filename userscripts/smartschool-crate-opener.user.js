@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         Smartschool CS:GO Crate Opener
 // @namespace    https://github.com/kobejanssen26-wq/vynra
-// @version      1.0.0
+// @version      2.0.0
 // @description  CS:GO-style crate opening animation for Smartschool results
 // @author       Vynra
 // @match        https://*.smartschool.be/*
+// @match        https://*.smartschool.nl/*
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
@@ -15,8 +16,9 @@
  *      (of open de "raw" URL van dit bestand: Tampermonkey biedt dan zelf Install aan).
  *   2. Controleer dat de @match-regels hierboven overeenkomen met jouw Smartschool-URL.
  *      Staat je URL er niet bij? Voeg een regel toe, bv.  // @match  https://jouwdomein.nl/resultaat/*
- *   3. Werkt de score-detectie niet? Zet CONFIG.scoreSelector op de CSS-selector van het
- *      element dat de score toont (rechtsklik op de score -> Inspect). Zie CONFIG hieronder.
+ *   3. Het script doet niets, behalve op de Resultaten-pagina (Ga naar -> Resultaten).
+ *      Worden jouw resultaten niet goed gelezen? Vul CONFIG.rowSelector /
+ *      scoreInRowSelector / titleInRowSelector in (rechtsklik -> Inspect). Zie CONFIG.
  *
  * De script leest de score alleen uit de bestaande pagina; er wordt NIETS willekeurig
  * gegenereerd en de originele pagina wordt nooit aangepast of verwijderd. De crate-UI
@@ -30,20 +32,21 @@
    * 1. CONFIG - hier pas je dingen makkelijk aan
    * ==================================================================== */
   const CONFIG = {
-    // Optioneel: exacte CSS-selector van het score-element. Heeft altijd voorrang.
-    // Voorbeeld: '.result-score' of '#score'. Leeg = automatische detectie.
-    scoreSelector: '',
+    // Herkenning van de Resultaten-pagina (domein-onafhankelijk): pad/hash/zoekopdracht OF een kop "Resultaten".
+    resultsUrlPattern: /\/results(?:\/|$|\?|#)|\/skore|resultaten/i,
+    resultsHeading: /^(resultaten|results)$/i,
 
-    // Optioneel: alleen draaien als de URL hierop matcht (regex). Leeg = altijd (binnen @match).
-    // Voorbeeld: /result|resultaat|score|uitslag/i
-    urlPattern: /\/results|\/skore|resultaten|uitslag/i,
+    // Optionele overrides als de automatische uitlezing bij jouw school niet klopt:
+    rowSelector: '', // bv. 'table.results tr' - een rij per resultaat
+    scoreInRowSelector: '', // bv. 'td.score' (binnen de rij)
+    titleInRowSelector: '', // bv. 'td.name' (binnen de rij)
+    scoreCellSelector: '', // alternatief: selector die enkel de score-elementen pakt
 
-    // Trefwoorden die helpen de score te herkennen (class/id/omliggende tekst).
-    scoreKeywords: /score|result|resultaat|uitslag|percent|procent|punten|points|grade|cijfer|behaald|correct|goed/i,
+
     // Elementen waar we NIET in zoeken (navigatie, voetnoot, onze eigen UI, ...).
     ignoreSelector: 'script,style,noscript,nav,footer,header nav,[aria-hidden="true"],progress,[role="progressbar"]',
 
-    detectTimeoutMs: 15000, // hoe lang we wachten op een (dynamisch geladen) score
+    debounceMs: 300, // wachttijd na DOM-wijzigingen voor we opnieuw controleren
     failSafeRevealMs: 4000, // pagina nooit langer dan dit verborgen houden zonder crate
 
     spinBaseMs: 7500, // duur van de animatie bij snelheid 1x
@@ -93,14 +96,34 @@
   }
 
   /* ======================================================================
-   * 3. Pre-hide: voorkomt dat de echte score even zichtbaar is (flash)
+   * 3. Pagina-herkenning: ALLEEN de Resultaten-pagina (SPA-proof)
    * ==================================================================== */
+  const PageGate = {
+    /** Pre-hide alleen als de URL er al op wijst - voorkomt een flits van de echte scores. */
+    urlLooksLikeResults() {
+      return CONFIG.resultsUrlPattern.test(location.pathname + location.hash + location.search);
+    },
+    /** Zichtbare kop "Resultaten" in de pagina-inhoud (niet in het navigatiemenu). */
+    hasResultsHeading() {
+      const heads = document.querySelectorAll('h1,h2,h3,[class*="title" i],[class*="heading" i]');
+      return Array.from(heads).some(
+        (h) =>
+          !h.closest(CONFIG.ignoreSelector + ',[data-ss-crate]') &&
+          CONFIG.resultsHeading.test((h.textContent || '').trim()) &&
+          h.getClientRects().length > 0
+      );
+    },
+    isResultsPage() {
+      return this.urlLooksLikeResults() || this.hasResultsHeading();
+    },
+  };
+
   const PendingGuard = {
-    id: 'ss-crate-pending-style',
     on() {
       if (!document.documentElement) return setTimeout(() => this.on(), 5);
+      if (document.getElementById('ss-crate-pending-style')) return;
       const s = document.createElement('style');
-      s.id = this.id;
+      s.id = 'ss-crate-pending-style';
       s.textContent = 'html.ss-crate-pending body{visibility:hidden!important}';
       (document.head || document.documentElement).appendChild(s);
       document.documentElement.classList.add('ss-crate-pending');
@@ -113,128 +136,123 @@
   };
 
   /* ======================================================================
-   * 4. Score-detectie (robuust, meerdere strategieen)
+   * 4. Resultaten uitlezen uit de bestaande DOM (nooit random)
    * ==================================================================== */
-  const ScoreDetector = {
-    PCT: /(\d{1,3}(?:[.,]\d{1,2})?)\s*%/,
-    FRAC: /(\d{1,4}(?:[.,]\d+)?)\s*(?:\/|van de|van|out of|uit)\s*(\d{1,4}(?:[.,]\d+)?)/i,
+  const ResultsScanner = {
+    PCT: /^\s*(\d{1,3}(?:[.,]\d{1,2})?)\s*%\s*$/,
+    FRAC: /^\s*(\d{1,4}(?:[.,]\d+)?)\s*(?:\/|van de|van|out of|uit)\s*(\d{1,4}(?:[.,]\d+)?)\s*$/i,
     num: (s) => parseFloat(String(s).replace(',', '.')),
 
-    /** Parse een tekst naar een percentage (0-100) of null. */
-    parse(text, { allowBare = false } = {}) {
-      if (!text) return null;
-      const t = text.replace(/ /g, ' ').trim();
+    /** "78%" of "15/20" -> {percent, kind} ; strikt, de hele celtekst moet de score zijn. */
+    parseScore(text) {
+      const t = (text || '').replace(/ /g, ' ').trim();
+      if (!t || t.length > 20) return null;
       let m = t.match(this.PCT);
       if (m) {
         const v = this.num(m[1]);
-        return v >= 0 && v <= 100 ? v : null;
+        return v <= 100 ? { percent: v, kind: 'pct' } : null;
       }
       m = t.match(this.FRAC);
       if (m) {
         const a = this.num(m[1]);
         const b = this.num(m[2]);
-        if (b > 0 && a <= b) return Math.round((a / b) * 1000) / 10;
-      }
-      if (allowBare) {
-        m = t.match(/^\D*(\d{1,3}(?:[.,]\d+)?)\D*$/);
-        if (m) {
-          const v = this.num(m[1]);
-          if (v >= 0 && v <= 100) return v;
-        }
+        if (b > 0 && a >= 0 && a <= b) return { percent: Math.round((a / b) * 1000) / 10, kind: 'frac' };
       }
       return null;
     },
 
-    /** Strategie 1: door gebruiker opgegeven selector. */
-    fromSelector() {
-      if (!CONFIG.scoreSelector) return null;
-      const el = document.querySelector(CONFIG.scoreSelector);
-      if (!el) return null;
-      const p = this.parse(el.textContent, { allowBare: true });
-      return p == null ? null : { percent: p, el, via: 'selector' };
+    visible(el) {
+      return el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
     },
 
-    /** Strategie 2: kandidaten scoren op context, grootte en zichtbaarheid. */
-    fromHeuristics() {
-      const candidates = [];
-      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
-      let node;
-      while ((node = walker.nextNode())) {
-        if (node.closest && node.closest(CONFIG.ignoreSelector + ',[data-ss-crate]')) continue;
-        // alleen "bladeren": weinig tekst, eigen tekstnodes bevatten het getal
-        const own = Array.from(node.childNodes)
-          .filter((n) => n.nodeType === 3)
-          .map((n) => n.nodeValue)
-          .join(' ');
-        const full = (node.textContent || '').trim();
-        if (full.length > 60) continue;
-        const text = own.trim() ? own : full;
-        const percent = this.parse(text);
-        if (percent == null) continue;
-        const score = this.rate(node, full, text);
-        if (score > 0) candidates.push({ percent, el: node, score, via: 'heuristic' });
+    /** Alle "scorecellen": kleine elementen waarvan de volledige tekst een score is. */
+    scoreCells() {
+      const out = [];
+      const all = CONFIG.scoreCellSelector
+        ? document.querySelectorAll(CONFIG.scoreCellSelector)
+        : document.body.querySelectorAll('*');
+      for (const el of all) {
+        if (el.children.length > 2 || el.closest(CONFIG.ignoreSelector + ',[data-ss-crate]')) continue;
+        const text = el.textContent;
+        if (!text || text.length > 20) continue;
+        // Alleen het diepste element dat de tekst bevat (geen dubbele telling van wrappers)
+        if (el.children.length === 1 && el.firstElementChild.textContent === text) continue;
+        const sc = this.parseScore(text);
+        if (sc && this.visible(el)) out.push({ el, text: text.trim(), ...sc });
       }
-      candidates.sort((a, b) => b.score - a.score);
-      return candidates[0] || null;
+      return out;
     },
 
-    rate(el, full, text) {
-      const rect = el.getBoundingClientRect();
-      if (rect.width === 0 && rect.height === 0) return 0;
-      const cs = getComputedStyle(el);
-      if (cs.display === 'none' || cs.visibility === 'hidden') return 0;
-      let s = 1;
-      s += clamp(parseFloat(cs.fontSize) / 8, 0, 8); // grote cijfers = waarschijnlijk de score
-      if (/^\s*[\d.,]+\s*%\s*$/.test(full) || /^\s*[\d.,]+\s*\/\s*[\d.,]+\s*$/.test(full)) s += 3;
-      // context: eigen class/id + 3 ouders + vorig element
-      let ctx = '';
-      let p = el;
-      for (let i = 0; i < 4 && p; i++, p = p.parentElement) {
-        ctx += ' ' + (p.className && p.className.baseVal === undefined ? p.className : '') + ' ' + (p.id || '');
-        if (i < 2 && p.previousElementSibling) ctx += ' ' + (p.previousElementSibling.textContent || '').slice(0, 40);
-        if (i < 2 && p.parentElement) ctx += ' ' + (p.parentElement.textContent || '').slice(0, 80);
+    /** Bepaal de "rij" waar een scorecel bij hoort (tr/li/kaart). */
+    rowFor(cell, cells) {
+      const sem = cell.el.closest('tr,li,[role="row"],[role="listitem"]');
+      if (sem && !sem.matches('body,main')) return sem;
+      let row = cell.el;
+      for (let i = 0; i < 5 && row.parentElement; i++) {
+        const p = row.parentElement;
+        if (p.matches('body,main,form,[role="main"]')) break;
+        if (cells.filter((c) => p.contains(c.el)).length > 1) break;
+        row = p;
       }
-      if (CONFIG.scoreKeywords.test(ctx)) s += 6;
-      if (CONFIG.scoreKeywords.test(text)) s += 2;
-      if (/\bscore\b|resultaat/i.test(ctx)) s += 2;
-      if (rect.top < window.innerHeight * 1.5) s += 1;
-      return s;
+      return row;
     },
 
-    detect() {
-      return this.fromSelector() || this.fromHeuristics();
+    /** Titel/vak/toets uit de tekst van de rij halen (zonder de score zelf). */
+    labels(row, scoreEls) {
+      const parts = [];
+      const w = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+      let n;
+      while ((n = w.nextNode())) {
+        const t = n.nodeValue.replace(/\s+/g, ' ').trim();
+        if (!t || scoreEls.some((s) => s.contains(n))) continue;
+        if (this.parseScore(t) || /^[-–—•|:]+$/.test(t)) continue;
+        if (!parts.includes(t)) parts.push(t);
+      }
+      return parts;
     },
 
-    /** Wacht tot er een score in de DOM verschijnt (ook voor SPA's). */
-    wait(timeout = CONFIG.detectTimeoutMs) {
-      return new Promise((resolve) => {
-        const tryNow = () => {
-          const r = this.detect();
-          if (r) {
-            cleanup();
-            resolve(r);
-            return true;
-          }
-          return false;
-        };
-        let t = null;
-        const mo = new MutationObserver(() => {
-          clearTimeout(t);
-          t = setTimeout(tryNow, 250); // debounce
+    scan() {
+      if (CONFIG.rowSelector) return this.scanCustom();
+      const cells = this.scoreCells();
+      const rows = new Map();
+      for (const c of cells) {
+        const row = this.rowFor(c, cells);
+        if (!rows.has(row)) rows.set(row, []);
+        rows.get(row).push(c);
+      }
+      const results = [];
+      rows.forEach((group, row) => {
+        // Voorkeur: breuk (bv. 15/20), anders percentage - beide leveren hetzelfde percentage.
+        const main = group.find((g) => g.kind === 'frac') || group[0];
+        const parts = this.labels(row, group.map((g) => g.el));
+        const title = parts[0] || 'Result';
+        results.push({
+          title,
+          subtitle: parts.slice(1, 3).join(' · '),
+          percent: main.percent,
+          raw: main.text,
+          el: row,
         });
-        const cleanup = () => {
-          mo.disconnect();
-          clearTimeout(t);
-          clearTimeout(to);
-        };
-        const to = setTimeout(() => {
-          cleanup();
-          resolve(null);
-        }, timeout);
-        if (tryNow()) return;
-        mo.observe(document.body, { childList: true, subtree: true, characterData: true });
       });
+      results.forEach((r, i) => (r.id = `${i}|${r.title}|${r.raw}`));
+      return results;
     },
+
+    /** Optioneel: eigen selectors (CONFIG.rowSelector + scoreInRowSelector + titleInRowSelector). */
+    scanCustom() {
+      return Array.from(document.querySelectorAll(CONFIG.rowSelector))
+        .map((row, i) => {
+          const sEl = CONFIG.scoreInRowSelector ? row.querySelector(CONFIG.scoreInRowSelector) : row;
+          const sc = sEl && this.parseScore(sEl.textContent.trim());
+          if (!sc) return null;
+          const tEl = CONFIG.titleInRowSelector && row.querySelector(CONFIG.titleInRowSelector);
+          const title = (tEl ? tEl.textContent : this.labels(row, [sEl])[0] || 'Result').trim();
+          return { id: `${i}|${title}|${sEl.textContent.trim()}`, title, subtitle: '', percent: sc.percent, raw: sEl.textContent.trim(), el: row };
+        })
+        .filter(Boolean);
+    },
+
+    signature: (list) => list.map((r) => r.id).join('\n'),
   };
 
   /* ======================================================================
@@ -385,6 +403,18 @@
       padding:12px 18px;font:700 13px/1 'Segoe UI',system-ui,sans-serif;letter-spacing:.1em;color:#fff;
       background:linear-gradient(135deg,#8847ff,#d32ce6);box-shadow:0 8px 24px rgba(136,71,255,.5)}
     .fab.show{display:block}
+    .list{display:grid;gap:10px;max-height:min(46vh,420px);overflow:auto;padding:4px;margin:6px 0 18px;text-align:left}
+    .card{text-align:left;display:flex;align-items:center;gap:14px;cursor:pointer;font:inherit;color:#e8ecf8;padding:14px 18px;border-radius:14px;
+      background:linear-gradient(135deg,rgba(255,255,255,.07),rgba(255,255,255,.02));border:1px solid rgba(255,255,255,.12);
+      border-left:4px solid var(--c);transition:transform .15s,background .15s,box-shadow .15s}
+    .card:hover{transform:translateX(4px);background:rgba(255,255,255,.12);box-shadow:0 0 24px color-mix(in srgb,var(--c) 40%,transparent)}
+    .card .ico{font-size:22px}
+    .card .txt{flex:1;display:flex;flex-direction:column;gap:3px;min-width:0}
+    .card .txt b{font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .card .txt small{color:#8d97c4;font-size:12px;letter-spacing:.08em;text-transform:uppercase}
+    .card .val{font-size:22px;font-weight:800;color:var(--c)}
+    .card:not(.done) .val{opacity:.6;letter-spacing:.1em}
+    .done-title{margin-top:4px;font-size:18px;font-weight:700;color:#cfd6f5}
     @media (max-width:640px){.panel{padding:24px 14px}.roulette{height:170px}.tile{height:130px}.tile b{font-size:28px}}
     @media (prefers-reduced-motion:reduce){.crate{animation:none}}
   `;
@@ -403,9 +433,12 @@
     </svg>`;
 
   class CrateUI {
-    constructor(getScore) {
-      this.getScore = getScore; // () => {percent}|null - leest "live" bij het openen
-      this.state = 'locked';
+    constructor(results, rescan) {
+      this.results = results;
+      this.rescan = rescan; // () => results[] - leest "live" opnieuw bij het openen
+      this.current = null;
+      this.opened = new Set();
+      this.state = 'pick';
       this.raf = 0;
       this.build();
     }
@@ -435,12 +468,22 @@
             </div>
           </div>
           <div class="panel">
-            <div class="view v-locked active">
+            <div class="view v-pick active">
+              <div class="eyebrow">Smartschool · Results</div>
+              <h1>Choose a crate</h1>
+              <p class="sub">Every result is sealed in its own crate. <span class="pick-count"></span></p>
+              <div class="list"></div>
+              <div class="actions"><button class="btn ghost" data-a="original">👁 Show original results</button></div>
+            </div>
+            <div class="view v-locked">
               ${CRATE_SVG}
               <div class="lock">🔒 SCORE LOCKED</div>
-              <h1>Open your crate</h1>
-              <p class="sub">Your result is sealed inside. Crack it open to reveal your score.</p>
-              <button class="btn" data-a="open">Open crate</button>
+              <h1 class="crate-title">Open your crate</h1>
+              <p class="sub crate-sub"></p>
+              <div class="actions">
+                <button class="btn" data-a="open">Open crate</button>
+                <button class="btn ghost" data-a="back">← All results</button>
+              </div>
             </div>
             <div class="view v-spin">
               <div class="eyebrow">Opening crate</div>
@@ -449,11 +492,13 @@
             </div>
             <div class="view v-done">
               <div class="eyebrow">🎉 Crate opened!</div>
+              <div class="done-title"></div>
               <div class="score-big"></div>
               <div class="tier"></div>
               <div class="sub-line"></div>
               <div class="actions">
-                <button class="btn" data-a="original">Show results</button>
+                <button class="btn" data-a="back">Open another crate</button>
+                <button class="btn ghost" data-a="original">Show original results</button>
                 <button class="btn ghost" data-a="reopen">🔄 Reopen crate</button>
               </div>
             </div>
@@ -469,7 +514,46 @@
         if (e.target.dataset.k === 'speed') Settings.set('speed', parseFloat(e.target.value));
       });
       this.syncSettings();
+      this.renderList();
       this.lockScroll(true);
+    }
+
+    destroy() {
+      cancelAnimationFrame(this.raf);
+      cancelAnimationFrame(this.confettiRaf);
+      this.lockScroll(false);
+      this.host.remove();
+    }
+
+    setResults(results) {
+      this.results = results;
+      if (this.current && !results.some((r) => r.id === this.current.id)) this.current = null;
+      this.renderList();
+    }
+
+    renderList() {
+      const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+      this.$('.list').innerHTML = this.results
+        .map((r, i) => {
+          const done = this.opened.has(r.id);
+          const t = tierFor(r.percent);
+          return `<button class="card${done ? ' done' : ''}" data-a="choose" data-i="${i}" style="--c:${done ? t.color : '#8847ff'}">
+            <span class="ico">${done ? '🔓' : '🔒'}</span>
+            <span class="txt"><b>${esc(r.title)}</b><small>${esc(r.subtitle || (done ? tier(r) : 'Sealed crate'))}</small></span>
+            <span class="val">${done ? fmt(r.percent) : '???'}</span>
+          </button>`;
+        })
+        .join('');
+      const n = this.results.length;
+      this.$('.pick-count').textContent = `${this.opened.size} / ${n} opened`;
+      function tier(r) { return tierFor(r.percent).name; }
+    }
+
+    choose(i) {
+      this.current = this.results[i];
+      this.$('.crate-title').textContent = this.current.title;
+      this.$('.crate-sub').textContent = this.current.subtitle || 'Crack it open to reveal your score.';
+      this.show('locked');
     }
 
     syncSettings() {
@@ -508,15 +592,26 @@
       else if (act === 'reopen') this.reopen();
       else if (act === 'original') this.showOriginal();
       else if (act === 'crate') this.showCrate();
+      else if (act === 'choose') this.choose(+a.dataset.i);
+      else if (act === 'back') this.backToList();
       if (act !== 'open') this.$('.menu').classList.remove('open');
     }
 
     /* ---- acties ---- */
+    backToList() {
+      cancelAnimationFrame(this.raf);
+      this.clearConfetti();
+      this.root.style.setProperty('--accent', '#8847ff');
+      this.renderList();
+      this.show('pick');
+    }
+
     reopen() {
       cancelAnimationFrame(this.raf);
       this.clearConfetti();
       this.showCrate();
-      this.show('locked');
+      if (this.current) this.show('locked');
+      else this.backToList();
     }
 
     showOriginal() {
@@ -561,12 +656,10 @@
 
     async open() {
       if (this.state === 'spinning') return;
-      const found = this.getScore();
-      if (!found) {
-        this.$('.v-locked .sub').textContent =
-          "Couldn't find your score on this page. Set CONFIG.scoreSelector in the userscript.";
-        return;
-      }
+      if (!this.current) return this.backToList();
+      // Opnieuw uit de pagina lezen, zodat de échte (actuele) score gebruikt wordt.
+      const live = this.rescan().find((r) => r.id === this.current.id);
+      const found = live || this.current;
       Sound.ensure();
       this.state = 'spinning';
       this.show('spin');
@@ -609,6 +702,7 @@
 
     finish(percent) {
       const tier = tierFor(percent);
+      this.opened.add(this.current.id);
       this.$('.status').textContent = 'Unboxing…';
       const win = this.$('.tile.win');
       win.classList.add('lit');
@@ -617,7 +711,10 @@
       setTimeout(() => {
         this.$('.score-big').textContent = fmt(percent);
         this.$('.tier').textContent = tier.name;
-        this.$('.sub-line').innerHTML = '<p class="sub">Your score</p>';
+        this.$('.done-title').textContent = this.current.title;
+        const raw = this.current.raw;
+        this.$('.sub-line').innerHTML = '<p class="sub"></p>';
+        this.$('.sub-line .sub').textContent = 'Your score' + (raw && raw !== fmt(percent) ? ` (${raw})` : '');
         this.show('done');
         this.confetti(tier.color);
         this.state = 'revealed';
@@ -672,33 +769,78 @@
   }
 
   /* ======================================================================
-   * 8. Boot
+   * 8. Boot + SPA-navigatie: UI verschijnt alleen op de Resultaten-pagina
    * ==================================================================== */
-  function boot() {
-    if (CONFIG.urlPattern && !CONFIG.urlPattern.test(location.href)) return;
-    if (window.top !== window.self) return; // niet in iframes
-    Settings.load();
-    PendingGuard.on();
+  const App = {
+    ui: null,
+    timer: 0,
 
-    whenBodyReady(async () => {
-      const first = await ScoreDetector.wait();
-      if (!first) {
-        log('Geen score gevonden - pagina blijft ongewijzigd. Stel CONFIG.scoreSelector in als dit een resultatenpagina is.');
+    start() {
+      if (window.top !== window.self) return; // niet in iframes
+      Settings.load();
+      if (PageGate.urlLooksLikeResults()) PendingGuard.on();
+
+      // History-API haken (pushState/replaceState vuren geen event af)
+      ['pushState', 'replaceState'].forEach((fn) => {
+        const orig = history[fn];
+        history[fn] = function () {
+          const r = orig.apply(this, arguments);
+          App.schedule();
+          return r;
+        };
+      });
+      window.addEventListener('popstate', () => this.schedule());
+      window.addEventListener('hashchange', () => this.schedule());
+      whenBodyReady(() => {
+        // Smartschool laadt delen van de pagina dynamisch -> DOM observeren
+        new MutationObserver((muts) => {
+          if (muts.every((m) => m.target.closest && m.target.closest('[data-ss-crate]'))) return;
+          this.schedule();
+        }).observe(document.body, { childList: true, subtree: true, characterData: true });
+        this.schedule(0);
+      });
+      // Vangnet: nooit blijvend verborgen
+      setTimeout(() => PendingGuard.off(), CONFIG.failSafeRevealMs);
+    },
+
+    schedule(delay = CONFIG.debounceMs) {
+      clearTimeout(this.timer);
+      this.timer = setTimeout(() => this.check(), delay);
+    },
+
+    check() {
+      const onResults = PageGate.isResultsPage();
+      if (!onResults) {
+        if (this.ui) this.unmount();
         PendingGuard.off();
         return;
       }
-      log('Score gevonden:', first.percent, `(via ${first.via})`, first.el);
-      let latest = first;
-      // Bij het openen opnieuw lezen, zodat een late DOM-update de juiste waarde geeft.
-      const ui = new CrateUI(() => {
-        const r = ScoreDetector.detect();
-        if (r) latest = r;
-        return latest;
-      });
-      void ui;
+      const results = ResultsScanner.scan();
+      if (!results.length) {
+        // Resultaten zijn mogelijk nog aan het laden; pagina blijft normaal zichtbaar.
+        PendingGuard.off();
+        return;
+      }
+      if (this.ui) {
+        // Al gemount: alleen de lijst verversen als de resultaten echt veranderd zijn
+        if (ResultsScanner.signature(results) !== this.sig) {
+          this.sig = ResultsScanner.signature(results);
+          this.ui.setResults(results);
+        }
+        return;
+      }
+      this.sig = ResultsScanner.signature(results);
+      log('Resultaten-pagina gedetecteerd:', results.map((r) => `${r.title} ${r.raw}`));
+      this.ui = new CrateUI(results, () => ResultsScanner.scan());
       PendingGuard.off();
-    });
-  }
+    },
 
-  boot();
+    unmount() {
+      this.ui.destroy();
+      this.ui = null;
+      this.sig = '';
+    },
+  };
+
+  App.start();
 })();
