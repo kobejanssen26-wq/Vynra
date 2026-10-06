@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Smartschool CS:GO Crate Opener
 // @namespace    https://github.com/kobejanssen26-wq/vynra
-// @version      3.0.0
+// @version      3.1.0
 // @description  CS:GO-style crate opening animation for Smartschool results
 // @author       Vynra
 // @updateURL    https://raw.githubusercontent.com/kobejanssen26-wq/Vynra/claude/sweet-gates-k915fg/userscripts/smartschool-crate-opener.user.js
@@ -169,7 +169,7 @@
     /** Klim omhoog zolang de ouder nog maar EEN percentage en EEN breuk bevat (= een resultaat). */
     rowFor(cell, cells) {
       let row = cell.el;
-      for (let i = 0; i < 8 && row.parentElement; i++) {
+      for (let i = 0; i < 40 && row.parentElement; i++) {
         const p = row.parentElement;
         if (p.matches('body,main,form,[role="main"]') || (p.textContent || '').length > 500) break;
         if (p.querySelector(CONFIG.menuSelector)) break;
@@ -223,8 +223,12 @@
         const pct = group.find((g) => g.kind === 'pct');
         const frac = group.find((g) => g.kind === 'frac');
         const parts = this.labels(row, group.map((g) => g.el));
-        const head = row.querySelector('h1,h2,h3,h4,[class*="title" i],[class*="name" i]');
-        const headOk = head && !group.some((g) => head.contains(g.el) || g.el.contains(head));
+        const generic = /^(details?|resultaten|results|vak|vakken)$/i;
+        const head = Array.from(row.querySelectorAll('h1,h2,h3,h4,[class*="title" i],[class*="name" i]')).find((h) => {
+          const t = h.textContent.replace(/\s+/g, ' ').trim();
+          return t.length > 2 && !generic.test(t) && !group.some((g) => h.contains(g.el) || g.el.contains(h));
+        });
+        const headOk = !!head;
         const headText = headOk ? head.textContent.replace(/\s+/g, ' ').trim() : '';
         let title;
         let titleEl;
@@ -301,7 +305,7 @@
 
   // ===== 5. Onthoud echte resultaten (voor de roulette; nooit verzonnen) =====
   const Store = {
-    key: 'ssCrateOpener.seen.v1',
+    key: 'ssCrateOpener.seen.v2',
     cache: null,
     all() {
       if (!this.cache) {
@@ -414,58 +418,49 @@
     },
   };
 
-  // ===== 8. Pagina-CSS: kaarten neutraal houden zolang ze vergrendeld zijn =====
-  // (de kaartkleur - geel/blauw/groen - zou anders de score verraden)
-  const PageCss = {
-    mount() {
-      if (document.getElementById('ss-crate-page-css')) return;
-      const s = document.createElement('style');
-      s.id = 'ss-crate-page-css';
-      s.textContent =
-        '[data-ssc-locked]{background:#eef0f5 !important;border-color:#d7dbe6 !important;box-shadow:none !important}';
-      (document.head || document.documentElement).appendChild(s);
-    },
-    unmount() {
-      const s = document.getElementById('ss-crate-page-css');
-      if (s) s.remove();
-    },
-  };
-
-  // ===== 9. Crate-widget (Shadow DOM, per resultaat) =====
+  // ===== 8. Crate-overlay (Shadow DOM, per resultaat): ligt BOVEN de kaart en raakt Smartschool's HTML niet aan =====
   const WIDGET_CSS = `
-    :host{display:block;all:initial;display:block}
     *{box-sizing:border-box}
-    .crate{margin:8px 0;padding:8px 10px 10px;border-radius:12px;text-align:center;color:#e8ecf8;
-      font-family:'Segoe UI',system-ui,-apple-system,Roboto,sans-serif;
-      background:linear-gradient(180deg,#1c2230,#10141c);border:1px solid rgba(255,255,255,.07);
-      box-shadow:0 6px 18px rgba(0,0,0,.25),inset 0 1px 0 rgba(255,255,255,.06)}
-    .label{font-size:10px;letter-spacing:.28em;font-weight:800;color:#8d97c4;text-transform:uppercase}
-    .window{position:relative;margin:7px auto 8px;width:min(310px,100%);height:58px;overflow:hidden;border-radius:9px;
-      background:#0b0e14;border:1px solid rgba(255,255,255,.12)}
+    .crate{position:absolute;inset:0;display:flex;align-items:center;gap:14px;padding:8px 14px;border-radius:10px;
+      color:#e8ecf8;font-family:'Segoe UI',system-ui,-apple-system,Roboto,sans-serif;overflow:hidden;pointer-events:none;
+      background:linear-gradient(180deg,#1c2230,#10141c);border:1px solid rgba(255,255,255,.08);
+      box-shadow:0 6px 18px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.06)}
+    .crate:not(.wide){flex-direction:column;justify-content:center;gap:6px;text-align:center}
+    .crate:not(.wide) .info{display:none}
+    .info{flex:1;min-width:0;text-align:left}
+    .info b{display:block;font-size:17px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#fff}
+    .info small{display:block;margin-top:3px;font-size:11px;color:#8d97c4;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .mid{flex:0 0 min(300px,52%);min-width:0;text-align:center}
+    .crate:not(.wide) .mid{flex:none;width:min(310px,100%)}
+    .label{font-size:9.5px;letter-spacing:.28em;font-weight:800;color:#8d97c4;text-transform:uppercase}
+    .window{position:relative;margin-top:5px;width:100%;height:56px;overflow:hidden;border-radius:9px;background:#0b0e14;border:1px solid rgba(255,255,255,.12)}
     .window:before,.window:after{content:'';position:absolute;top:0;bottom:0;width:20%;z-index:2;pointer-events:none}
     .window:before{left:0;background:linear-gradient(90deg,#0b0e14,transparent)}
     .window:after{right:0;background:linear-gradient(270deg,#0b0e14,transparent)}
     .strip{position:absolute;top:0;left:0;height:100%;display:flex;align-items:center;gap:var(--gap);padding-left:6px;will-change:transform}
-    .tile{flex:0 0 var(--tw);height:44px;border-radius:7px;display:flex;align-items:center;justify-content:center;
+    .tile{flex:0 0 var(--tw);height:42px;border-radius:7px;display:flex;align-items:center;justify-content:center;
       background:linear-gradient(180deg,#323a4b,#232937);border-bottom:3px solid var(--c);
-      font-weight:800;font-size:14px;color:#fff;text-shadow:0 0 10px var(--c)}
+      font-weight:800;font-size:13px;color:#fff;text-shadow:0 0 10px var(--c)}
     .tile.win.lit{box-shadow:0 0 0 2px var(--c),0 0 18px var(--c)}
     .marker{position:absolute;top:0;bottom:0;left:50%;width:3px;margin-left:-1.5px;z-index:3;border-radius:2px;
       background:linear-gradient(180deg,#ffe27a,#ff9f1a);box-shadow:0 0 10px #ffb22e}
-    .btn{cursor:pointer;border:1px solid rgba(255,255,255,.28);border-radius:8px;padding:5px 14px;font:800 10.5px/1 inherit;
-      letter-spacing:.14em;text-transform:uppercase;color:#fff;background:rgba(255,255,255,.1);font-family:inherit;transition:background .15s,transform .1s}
-    .btn:hover:not([disabled]){background:rgba(255,255,255,.2);transform:translateY(-1px)}
+    .btn,.chip{pointer-events:auto;cursor:pointer;border:1px solid rgba(255,255,255,.28);border-radius:8px;padding:7px 13px;
+      font:800 10.5px/1 'Segoe UI',system-ui,sans-serif;letter-spacing:.13em;text-transform:uppercase;color:#fff;background:rgba(255,255,255,.1);white-space:nowrap}
+    .btn:hover:not([disabled]){background:rgba(255,255,255,.2)}
     .btn.go{border-color:#ffd25e;color:#ffe9a8;background:rgba(255,200,70,.14)}
     .btn[disabled]{cursor:default;color:#ffe9a8;border-color:#ffd25e}
-    .rv{display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;padding:6px 4px 4px;animation:pop .5s cubic-bezier(.2,1.4,.4,1) both}
+    .side{flex:0 0 auto}
+    .rv{flex:1;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;animation:pop .5s cubic-bezier(.2,1.4,.4,1) both}
     @keyframes pop{from{transform:scale(.85);opacity:0}}
-    .subj{padding:4px 12px;border-radius:99px;font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;
-      background:linear-gradient(135deg,#8847ff,#d32ce6);color:#fff}
+    .subj{padding:4px 12px;border-radius:99px;font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;background:linear-gradient(135deg,#8847ff,#d32ce6);color:#fff}
     .subj:empty{display:none}
-    .pts{font-size:20px;font-weight:800}
-    .pct{font-size:28px;font-weight:900;color:#fff;text-shadow:0 0 18px var(--c)}
+    .rt{font-size:15px;font-weight:700;color:#cfd6f5;max-width:40%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .pts{font-size:22px;font-weight:800}
+    .pct{font-size:30px;font-weight:900;color:#fff;text-shadow:0 0 18px var(--c)}
     .tier{font-size:10px;font-weight:800;letter-spacing:.22em;text-transform:uppercase;color:var(--c);border:1px solid var(--c);padding:3px 9px;border-radius:99px}
-    .crate.done{border-color:var(--c);box-shadow:0 0 22px color-mix(in srgb,var(--c) 35%,transparent),0 6px 18px rgba(0,0,0,.25)}
+    .crate.done{border-color:var(--c);box-shadow:0 0 22px color-mix(in srgb,var(--c) 40%,transparent),0 6px 18px rgba(0,0,0,.28)}
+    .crate.chipmode{display:block;padding:0;background:none;border:0;box-shadow:none}
+    .chip{width:100%;height:100%;padding:0 8px;background:rgba(16,20,28,.92);border-color:rgba(255,255,255,.25)}
   `;
 
   class CrateWidget {
@@ -475,13 +470,16 @@
       this.key = r.key;
       this.state = 'idle';
       this.raf = 0;
-      this.hidden = [];
+      this.timer = 0;
+      this.wide = false;
+      this.scrollers = null;
       this.host = document.createElement('div');
       this.host.setAttribute('data-ss-crate', '');
+      this.host.style.cssText = 'position:fixed;left:0;top:0;display:none;pointer-events:none;';
       this.shadow = this.host.attachShadow({ mode: 'open' });
       this.shadow.addEventListener('click', (e) => this.onClick(e));
-      this.place();
-      if (Opened.has(this.key)) this.showResult(false);
+      manager.layer.appendChild(this.host);
+      if (Opened.has(this.key)) this.showChip();
       else this.showIdle();
     }
 
@@ -489,43 +487,90 @@
       return this.shadow.querySelector(s);
     }
 
-    /** Naast de kaart (lijst) of direct onder de cirkel (groot detailpaneel) plaatsen. */
-    place() {
-      const row = this.r.el;
-      const tall = row.getBoundingClientRect().height > 260;
-      const targets = ResultsScanner.hideTargets(this.r);
-      const anchor = tall && targets.length ? targets[targets.length - 1] : row;
-      if (this.host.previousElementSibling !== anchor) anchor.insertAdjacentElement('afterend', this.host);
-    }
-
     update(r) {
       this.r = r;
-      if (!this.host.isConnected) this.place();
-      if (this.state !== 'revealed' && !this.m.originalMode) this.lockOriginal();
     }
 
-    // ---- originele score verbergen / terugzetten ----
-    lockOriginal() {
-      this.unlockOriginal();
-      this.r.el.setAttribute('data-ssc-locked', '');
-      ResultsScanner.hideTargets(this.r).forEach((t) => {
-        this.hidden.push([t, t.style.getPropertyValue('visibility'), t.style.getPropertyPriority('visibility')]);
-        t.style.setProperty('visibility', 'hidden', 'important');
-      });
+    // ---- positie: volgt de kaart (ook bij scrollen) en wordt bijgesneden door scrollcontainers ----
+    region() {
+      const rect = this.r.el.getBoundingClientRect();
+      if (rect.width < 2 || rect.height < 2) return null;
+      if (rect.height <= 260) return { x: rect.left, y: rect.top, w: rect.width, h: rect.height };
+      // Groot paneel (detail): alleen het scoregebied (cirkel) afdekken
+      const ts = ResultsScanner.hideTargets(this.r)
+        .map((t) => t.getBoundingClientRect())
+        .filter((b) => b.width > 0);
+      if (!ts.length) return null;
+      const l = Math.min(...ts.map((b) => b.left)) - 8;
+      const t = Math.min(...ts.map((b) => b.top)) - 8;
+      const rr = Math.max(...ts.map((b) => b.right)) + 8;
+      const bb = Math.max(...ts.map((b) => b.bottom)) + 8;
+      return { x: l, y: t, w: Math.min(Math.max(rr - l, 340), 440), h: Math.max(bb - t, 170) };
     }
 
-    unlockOriginal() {
-      this.r.el.removeAttribute('data-ssc-locked');
-      this.hidden.forEach(([t, v, p]) => {
-        if (v) t.style.setProperty('visibility', v, p);
-        else t.style.removeProperty('visibility');
-      });
-      this.hidden = [];
+    getScrollers() {
+      if (this.scrollersFor !== this.r.el) {
+        const list = [];
+        let n = this.r.el.parentElement;
+        while (n && n !== document.body && n !== document.documentElement) {
+          const cs = getComputedStyle(n);
+          if (/(auto|scroll|hidden|clip)/.test(cs.overflowX + cs.overflowY)) list.push(n);
+          n = n.parentElement;
+        }
+        this.scrollers = list;
+        this.scrollersFor = this.r.el;
+      }
+      return this.scrollers;
+    }
+
+    position() {
+      const st = this.host.style;
+      if (this.m.originalMode || !this.r.el.isConnected) {
+        st.display = 'none';
+        return;
+      }
+      const reg = this.region();
+      if (!reg) {
+        st.display = 'none';
+        return;
+      }
+      let box = reg;
+      if (this.state === 'done') box = { x: reg.x + reg.w - 132, y: reg.y + 6, w: 124, h: 26 };
+      let L = 0;
+      let T = 0;
+      let R = window.innerWidth;
+      let B = window.innerHeight;
+      for (const sc of this.getScrollers()) {
+        const b = sc.getBoundingClientRect();
+        L = Math.max(L, b.left);
+        T = Math.max(T, b.top);
+        R = Math.min(R, b.right);
+        B = Math.min(B, b.bottom);
+      }
+      const il = Math.max(0, L - box.x);
+      const it = Math.max(0, T - box.y);
+      const ir = Math.max(0, box.x + box.w - R);
+      const ib = Math.max(0, box.y + box.h - B);
+      if (il + ir >= box.w || it + ib >= box.h) {
+        st.display = 'none';
+        return;
+      }
+      st.display = 'block';
+      st.width = box.w + 'px';
+      st.height = box.h + 'px';
+      st.transform = `translate(${box.x}px,${box.y}px)`;
+      st.clipPath = il || it || ir || ib ? `inset(${it}px ${ir}px ${ib}px ${il}px)` : 'none';
+      const wide = box.w >= 460;
+      if (wide !== this.wide) {
+        this.wide = wide;
+        const c = this.$('.crate');
+        if (c) c.classList.toggle('wide', wide);
+      }
     }
 
     // ---- weergave ----
     chrome(inner, cls = '') {
-      this.shadow.innerHTML = `<style>${WIDGET_CSS}</style><div class="crate ${cls}">${inner}</div>`;
+      this.shadow.innerHTML = `<style>${WIDGET_CSS}</style><div class="crate ${cls}${this.wide ? ' wide' : ''}">${inner}</div>`;
     }
 
     /** Echte resultaten (zonder dit resultaat) als tegels; "?" als er nog geen andere bekend zijn. */
@@ -559,43 +604,56 @@
       return items
         .map((it, i) => {
           const isWin = i === CONFIG.winnerIndex;
-          if (!it || (isWin && hideWinner)) {
-            return `<div class="tile${isWin ? ' win' : ''}" style="--c:#b0c3d9">?</div>`;
-          }
+          if (!it || (isWin && hideWinner)) return `<div class="tile${isWin ? ' win' : ''}" style="--c:#b0c3d9">?</div>`;
           const t = tierFor(it.percent);
           return `<div class="tile${isWin ? ' win' : ''}" style="--c:${t.color}" title="${esc(it.title || '')}">${fmt(it.percent)}</div>`;
         })
         .join('');
     }
 
-    showIdle() {
-      this.state = 'idle';
-      this.lockOriginal();
-      const { items } = this.buildItems({ percent: this.r.percent, title: this.r.title, k: this.key });
-      this.chrome(
-        `<div class="label">Result crate</div>
-         <div class="window"><div class="strip" style="--tw:${CONFIG.tileWidth}px;--gap:${CONFIG.tileGap}px">${this.tilesHtml(items, true)}</div><div class="marker"></div></div>
-         <button class="btn go" data-a="open">Click to open</button>`
-      );
+    infoHtml() {
+      const r = this.r;
+      return `<div class="info"><b>${esc(r.title)}</b><small>${esc(r.subtitle || r.subject || 'Sealed result')}</small></div>`;
     }
 
-    showResult(animate) {
+    stripHtml(items, hideWinner, button) {
+      return `${this.infoHtml()}
+        <div class="mid"><div class="label">Result crate</div>
+          <div class="window"><div class="strip" style="--tw:${CONFIG.tileWidth}px;--gap:${CONFIG.tileGap}px">${this.tilesHtml(items, hideWinner)}</div><div class="marker"></div></div></div>
+        <div class="side">${button}</div>`;
+    }
+
+    showIdle() {
+      clearTimeout(this.timer);
+      this.state = 'idle';
+      const { items } = this.buildItems({ percent: this.r.percent, title: this.r.title, k: this.key });
+      this.chrome(this.stripHtml(items, true, '<button class="btn go" data-a="open">Click to open</button>'));
+    }
+
+    showCelebrate() {
       const r = this.r;
       const t = tierFor(r.percent);
-      this.state = 'revealed';
-      this.unlockOriginal();
+      this.state = 'celebrate';
       this.chrome(
-        `<div class="label">Crate opened</div>
-         <div class="rv" style="--c:${t.color};${animate ? '' : 'animation:none'}">
+        `<div class="rv" style="--c:${t.color}">
            <span class="subj">${esc(r.subject || '')}</span>
+           <span class="rt">${esc(r.title)}</span>
            ${r.max ? `<span class="pts">${nl(r.got)} / ${nl(r.max)}</span>` : ''}
            <span class="pct">${fmt(r.percent)}</span>
            <span class="tier">${t.name}</span>
-         </div>
-         <div style="margin-top:6px"><button class="btn" data-a="reopen">Reopen crate</button></div>`,
+         </div>`,
         'done'
       );
       this.$('.crate').style.setProperty('--c', t.color);
+      clearTimeout(this.timer);
+      this.timer = setTimeout(() => this.showChip(), 3000);
+    }
+
+    /** Crate is open: de overlay verdwijnt en de originele kaart (met echte score) is zichtbaar. */
+    showChip() {
+      clearTimeout(this.timer);
+      this.state = 'done';
+      this.chrome('<button class="chip" data-a="reopen">\u21bb Reopen crate</button>', 'chipmode');
     }
 
     onClick(e) {
@@ -611,17 +669,12 @@
     // ---- animatie ----
     open() {
       if (this.state === 'spinning') return;
-      // Opnieuw uit de pagina lezen, zodat de echte (actuele) score gebruikt wordt.
       const live = this.m.live(this.key);
       if (live) this.r = live;
       Sound.ensure();
       this.state = 'spinning';
       const { items, hasReal } = this.buildItems({ percent: this.r.percent, title: this.r.title, k: this.key });
-      this.chrome(
-        `<div class="label">Result crate</div>
-         <div class="window"><div class="strip" style="--tw:${CONFIG.tileWidth}px;--gap:${CONFIG.tileGap}px">${this.tilesHtml(items, !hasReal)}</div><div class="marker"></div></div>
-         <button class="btn go" disabled>Opening...</button>`
-      );
+      this.chrome(this.stripHtml(items, !hasReal, '<button class="btn go" disabled>Opening...</button>'));
       const strip = this.$('.strip');
       const wrap = this.$('.window');
       const step = CONFIG.tileWidth + CONFIG.tileGap;
@@ -655,12 +708,11 @@
     finish(hasReal) {
       const win = this.$('.tile.win');
       if (win) {
-        // Bij "?"-tegels pas nu het echte percentage tonen
         if (!hasReal) win.textContent = fmt(this.r.percent);
         win.classList.add('lit');
       }
       Sound.win();
-      setTimeout(() => {
+      this.timer = setTimeout(() => {
         Opened.add(this.key);
         this.m.revealKey(this.key, this);
       }, 900);
@@ -668,7 +720,7 @@
 
     destroy() {
       cancelAnimationFrame(this.raf);
-      this.unlockOriginal();
+      clearTimeout(this.timer);
       this.host.remove();
     }
   }
@@ -749,13 +801,29 @@
     crates: new Map(), // rij-element -> CrateWidget
     originalMode: false,
     panel: null,
-    results: [],
+    layer: null,
+    raf: 0,
 
-    sync(results) {
-      this.results = results;
-      PageCss.mount();
+    ensureLayer() {
+      if (this.layer && this.layer.isConnected) return;
+      const l = document.createElement('div');
+      l.setAttribute('data-ss-crate', '');
+      l.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;z-index:900;pointer-events:none;';
+      document.body.appendChild(l);
+      this.layer = l;
+      const frame = () => {
+        this.crates.forEach((c) => c.position());
+        this.raf = requestAnimationFrame(frame);
+      };
+      cancelAnimationFrame(this.raf);
+      this.raf = requestAnimationFrame(frame);
+    },
+
+    sync(all) {
+      this.ensureLayer();
       if (!this.panel) this.panel = new SettingsPanel(this);
-      // verdwenen rijen opruimen
+      // Een rij die een andere rij omvat is geen resultaat maar een container
+      const results = all.filter((r) => !all.some((o) => o !== r && r.el.contains(o.el)));
       this.crates.forEach((c, el) => {
         if (!el.isConnected || !results.some((r) => r.el === el)) {
           c.destroy();
@@ -764,28 +832,24 @@
       });
       results.forEach((r) => {
         const c = this.crates.get(r.el);
-        if (c) {
-          if (c.key !== r.key) {
-            c.destroy();
-            this.crates.delete(r.el);
-          } else return c.update(r);
-        }
-        const w = new CrateWidget(r, this);
-        if (this.originalMode) this.applyMode(w);
-        this.crates.set(r.el, w);
+        if (c && c.key === r.key) return c.update(r);
+        if (c) c.destroy();
+        this.crates.set(r.el, new CrateWidget(r, this));
       });
+      this.crates.forEach((c) => c.position()); // meteen plaatsen, nog voor de pagina zichtbaar wordt
     },
 
     live(key) {
       return ResultsScanner.scan().find((r) => r.key === key) || null;
     },
 
-    /** Een crate is open: alle widgets met hetzelfde resultaat (lijst + detail) tonen het resultaat. */
+    /** Een crate is open: alle widgets met hetzelfde resultaat (lijst + detail) volgen. */
     revealKey(key, origin) {
       this.crates.forEach((c) => {
         if (c.key !== key) return;
-        if (c !== origin) c.r = origin.r;
-        c.showResult(c === origin);
+        if (c !== origin) c.r = Object.assign({}, c.r, { percent: origin.r.percent, got: origin.r.got, max: origin.r.max, raw: origin.r.raw });
+        if (c === origin) c.showCelebrate();
+        else c.showChip();
       });
     },
 
@@ -795,31 +859,22 @@
 
     reopenAll() {
       this.crates.forEach((c) => Opened.remove(c.key));
-      this.setOriginalMode(false);
+      this.originalMode = false;
       this.crates.forEach((c) => c.showIdle());
-    },
-
-    applyMode(c) {
-      if (this.originalMode) {
-        c.unlockOriginal();
-        c.host.style.display = 'none';
-      } else {
-        c.host.style.display = '';
-        if (c.state !== 'revealed') c.lockOriginal();
-      }
     },
 
     setOriginalMode(on) {
       this.originalMode = on;
-      this.crates.forEach((c) => this.applyMode(c));
     },
 
     destroy() {
+      cancelAnimationFrame(this.raf);
       this.crates.forEach((c) => c.destroy());
       this.crates.clear();
       if (this.panel) this.panel.destroy();
       this.panel = null;
-      PageCss.unmount();
+      if (this.layer) this.layer.remove();
+      this.layer = null;
     },
   };
 
@@ -849,7 +904,7 @@
 
     start() {
       if (window.top !== window.self) return;
-      log('v3.0.0 geladen op', location.href);
+      log('v3.1.0 geladen op', location.href);
       Settings.load();
       if (PageGate.urlLooksLikeResults()) PendingGuard.on();
 
