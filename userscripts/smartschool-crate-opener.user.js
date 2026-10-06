@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Smartschool CS:GO Crate Opener
 // @namespace    https://github.com/kobejanssen26-wq/vynra
-// @version      2.3.0
+// @version      2.4.0
 // @description  CS:GO-style crate opening animation for Smartschool results
 // @author       Vynra
 // @updateURL    https://raw.githubusercontent.com/kobejanssen26-wq/Vynra/claude/sweet-gates-k915fg/userscripts/smartschool-crate-opener.user.js
@@ -40,6 +40,7 @@
     rowSelector: '', // bv. 'table.results tr' - een rij per resultaat
     scoreInRowSelector: '', // bv. 'td.score' (binnen de rij)
     titleInRowSelector: '', // bv. 'td.name' (binnen de rij)
+    subjectSelector: '', // optioneel: element (binnen de rij) met de vaknaam, bv. '.course-name'
     scoreCellSelector: '', // alternatief: selector die enkel de score-elementen pakt
 
 
@@ -152,7 +153,7 @@
       if (m) {
         const a = this.num(m[1]);
         const b = this.num(m[2]);
-        if (b > 0 && a >= 0 && a <= b) return { percent: Math.round((a / b) * 1000) / 10, kind: 'frac' };
+        if (b > 0 && a >= 0 && a <= b) return { percent: Math.round((a / b) * 1000) / 10, kind: 'frac', got: a, max: b };
       }
       return null;
     },
@@ -211,6 +212,20 @@
       return parts;
     },
 
+    /** Vak afleiden: eigen selector, of het label "Vak - soort" (bv. "Databanken - kennis") dat geen datum/titel is. */
+    subjectOf(row, parts, title) {
+      if (CONFIG.subjectSelector) {
+        const el = row.querySelector(CONFIG.subjectSelector);
+        if (el) return el.textContent.replace(/\s+/g, ' ').trim();
+      }
+      const dateRe = /\b(maandag|dinsdag|woensdag|donderdag|vrijdag|zaterdag|zondag|januari|februari|maart|april|mei|juni|juli|augustus|september|oktober|november|december)\b|\d{1,2}[\/.-]\d{1,2}/i;
+      const part = parts.find((t) => t !== title && !dateRe.test(t) && / - /.test(t));
+      if (!part) return '';
+      let v = part.split(' - ')[0].trim();
+      if (v.length > 3 && v === v.toUpperCase()) v = v.charAt(0) + v.slice(1).toLowerCase();
+      return v;
+    },
+
     scan() {
       if (CONFIG.rowSelector) return this.scanCustom();
       const cells = this.scoreCells();
@@ -226,7 +241,7 @@
         const pct = group.find((g) => g.kind === 'pct');
         const frac = group.find((g) => g.kind === 'frac');
         // Toon exact wat Smartschool zelf als percentage toont (bv. 3/8 -> 38%), breuk als extra
-        const main = { percent: (pct || frac).percent, text: (frac || pct).text };
+        const main = { percent: (pct || frac).percent, text: (frac || pct).text, got: frac && frac.got, max: frac && frac.max };
         const parts = this.labels(row, group.map((g) => g.el));
         // Titel: bij voorkeur een kop/titel-element in de rij, anders de eerste tekst
         const head = row.querySelector('h1,h2,h3,h4,[class*="title" i],[class*="name" i]');
@@ -234,8 +249,12 @@
         const title = headText || parts[0] || 'Result';
         if (headText) parts.splice(Math.max(0, parts.indexOf(headText)), 1);
         if (!headText) parts.shift();
+        const subject = this.subjectOf(row, parts, title);
         results.push({
           title,
+          subject,
+          got: main.got,
+          max: main.max,
           subtitle: parts.slice(0, 2).join(' \u00b7 '),
           percent: main.percent,
           raw: main.text,
@@ -459,6 +478,12 @@
     .card .txt small{color:#8d97c4;font-size:12px;letter-spacing:.08em;text-transform:uppercase}
     .card .val{font-size:22px;font-weight:800;color:var(--c)}
     .card:not(.done) .val{opacity:.6;letter-spacing:.1em}
+    .done-subject{display:inline-block;margin-top:8px;padding:6px 18px;border-radius:99px;font-size:15px;font-weight:800;letter-spacing:.14em;
+      text-transform:uppercase;color:#fff;background:linear-gradient(135deg,#8847ff,#d32ce6);box-shadow:0 6px 20px rgba(136,71,255,.45)}
+    .done-subject:empty{display:none}
+    .done-points{margin:2px 0 12px;font-size:clamp(22px,4vw,32px);font-weight:800;color:#e8ecf8;letter-spacing:.04em}
+    .done-points small{display:block;font-size:12px;font-weight:600;color:#8d97c4;letter-spacing:.25em;text-transform:uppercase;margin-top:2px}
+    .done-points:empty{display:none}
     .done-title{margin-top:4px;font-size:18px;font-weight:700;color:#cfd6f5}
     @media (max-width:640px){.panel{padding:24px 14px}.roulette{height:170px}.tile{height:130px}.tile b{font-size:28px}}
     @media (prefers-reduced-motion:reduce){.crate{animation:none}}
@@ -537,8 +562,10 @@
             </div>
             <div class="view v-done">
               <div class="eyebrow">\ud83c\udf89 Crate opened!</div>
+              <div class="done-subject"></div>
               <div class="done-title"></div>
               <div class="score-big"></div>
+              <div class="done-points"></div>
               <div class="tier"></div>
               <div class="sub-line"></div>
               <div class="actions">
@@ -722,6 +749,7 @@
       // Opnieuw uit de pagina lezen, zodat de \u00e9chte (actuele) score gebruikt wordt.
       const live = this.rescan().find((r) => r.id === this.current.id);
       const found = live || this.current;
+      this.current = found;
       Sound.ensure();
       this.state = 'spinning';
       this.show('spin');
@@ -773,10 +801,19 @@
       setTimeout(() => {
         this.$('.score-big').textContent = fmt(percent);
         this.$('.tier').textContent = tier.name;
-        this.$('.done-title').textContent = this.current.title;
-        const raw = this.current.raw;
-        this.$('.sub-line').innerHTML = '<p class="sub"></p>';
-        this.$('.sub-line .sub').textContent = 'Your score' + (raw && raw !== fmt(percent) ? ` (${raw})` : '');
+        const c = this.current;
+        const nl = (n) => String(n).replace('.', ',');
+        this.$('.done-subject').textContent = c.subject || '';
+        this.$('.done-title').textContent = c.title;
+        const pts = this.$('.done-points');
+        pts.textContent = '';
+        if (c.max) {
+          pts.textContent = `${nl(c.got)} / ${nl(c.max)}`;
+          const sm = document.createElement('small');
+          sm.textContent = 'points';
+          pts.appendChild(sm);
+        }
+        this.$('.sub-line').innerHTML = '<p class="sub">Your score</p>';
         this.show('done');
         this.confetti(tier.color);
         this.state = 'revealed';
@@ -856,7 +893,7 @@
 
     start() {
       if (window.top !== window.self) return; // niet in iframes
-      log('v2.3.0 geladen op', location.href);
+      log('v2.4.0 geladen op', location.href);
       Settings.load();
       if (PageGate.urlLooksLikeResults() && !App.ui) PendingGuard.on();
 
