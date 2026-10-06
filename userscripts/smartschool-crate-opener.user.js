@@ -1,9 +1,11 @@
 // ==UserScript==
 // @name         Smartschool CS:GO Crate Opener
 // @namespace    https://github.com/kobejanssen26-wq/vynra
-// @version      2.2.3
+// @version      2.2.4
 // @description  CS:GO-style crate opening animation for Smartschool results
 // @author       Vynra
+// @updateURL    https://raw.githubusercontent.com/kobejanssen26-wq/Vynra/claude/sweet-gates-k915fg/userscripts/smartschool-crate-opener.user.js
+// @downloadURL  https://raw.githubusercontent.com/kobejanssen26-wq/Vynra/claude/sweet-gates-k915fg/userscripts/smartschool-crate-opener.user.js
 // @match        https://*.smartschool.be/*
 // @match        https://*.smartschool.nl/*
 // @run-at       document-start
@@ -28,9 +30,7 @@
 (function () {
   'use strict';
 
-  /* ======================================================================
-   * 1. CONFIG - hier pas je dingen makkelijk aan
-   * ==================================================================== */
+  // ===== 1. CONFIG - hier pas je dingen makkelijk aan =====
   const CONFIG = {
     // Herkenning van de Resultaten-pagina (domein-onafhankelijk): pad/hash/zoekopdracht OF een kop "Resultaten".
     resultsUrlPattern: /\/results(?:\/|$|\?|#)|\/skore|resultaten/i,
@@ -77,9 +77,7 @@
     storageKey: 'ssCrateOpener.settings.v1',
   };
 
-  /* ======================================================================
-   * 2. Utils
-   * ==================================================================== */
+  // ===== 2. Utils =====
   const log = (...a) => console.log('[Crate Opener]', ...a);
   const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
   const rand = (a, b) => a + Math.random() * (b - a);
@@ -97,9 +95,7 @@
     mo.observe(document, { childList: true, subtree: true });
   }
 
-  /* ======================================================================
-   * 3. Pagina-herkenning: ALLEEN de Resultaten-pagina (SPA-proof)
-   * ==================================================================== */
+  // ===== 3. Pagina-herkenning: ALLEEN de Resultaten-pagina (SPA-proof) =====
   const PageGate = {
     /** Pre-hide alleen als de URL er al op wijst - voorkomt een flits van de echte scores. */
     urlLooksLikeResults() {
@@ -137,9 +133,7 @@
     },
   };
 
-  /* ======================================================================
-   * 4. Resultaten uitlezen uit de bestaande DOM (nooit random)
-   * ==================================================================== */
+  // ===== 4. Resultaten uitlezen uit de bestaande DOM (nooit random) =====
   const ResultsScanner = {
     PCT: /^\s*(\d{1,3}(?:[.,]\d{1,2})?)\s*%\s*$/,
     FRAC: /^\s*(\d{1,4}(?:[.,]\d+)?)\s*(?:\/|van de|van|out of|uit)\s*(\d{1,4}(?:[.,]\d+)?)\s*$/i,
@@ -147,7 +141,7 @@
 
     /** "78%" of "15/20" -> {percent, kind} ; strikt, de hele celtekst moet de score zijn. */
     parseScore(text) {
-      const t = (text || '').replace(/ /g, ' ').trim();
+      const t = (text || '').replace(/\u00a0/g, ' ').trim();
       if (!t || t.length > 20) return null;
       let m = t.match(this.PCT);
       if (m) {
@@ -188,7 +182,7 @@
 
     /**
      * Bepaal de "kaart/rij" van een scorecel: klim omhoog zolang de ouder nog maar
-     * ÉÉN percentage en ÉÉN breuk bevat (= één resultaat; Smartschool toont beide per kaart).
+     * \u00c9\u00c9N percentage en \u00c9\u00c9N breuk bevat (= \u00e9\u00e9n resultaat; Smartschool toont beide per kaart).
      */
     rowFor(cell, cells) {
       let row = cell.el;
@@ -211,7 +205,7 @@
       while ((n = w.nextNode())) {
         const t = n.nodeValue.replace(/\s+/g, ' ').trim();
         if (!t || scoreEls.some((s) => s.contains(n))) continue;
-        if (this.parseScore(t) || /^[-–—•|:]+$/.test(t)) continue;
+        if (this.parseScore(t) || /^[-\u2013\u2014\u2022|:]+$/.test(t)) continue;
         if (!parts.includes(t) && !/^(details|detail)$/i.test(t)) parts.push(t);
       }
       return parts;
@@ -242,7 +236,7 @@
         if (!headText) parts.shift();
         results.push({
           title,
-          subtitle: parts.slice(0, 2).join(' · '),
+          subtitle: parts.slice(0, 2).join(' \u00b7 '),
           percent: main.percent,
           raw: main.text,
           el: row,
@@ -275,9 +269,7 @@
     signature: (list) => list.map((r) => r.id).join('\n'),
   };
 
-  /* ======================================================================
-   * 5. Instellingen (localStorage, met veilige fallback)
-   * ==================================================================== */
+  // ===== 5. Instellingen (localStorage, met veilige fallback) =====
   const Settings = {
     data: { ...CONFIG.defaults },
     load() {
@@ -294,9 +286,7 @@
     },
   };
 
-  /* ======================================================================
-   * 6. Geluid (WebAudio, geen bestanden nodig; standaard uit)
-   * ==================================================================== */
+  // ===== 6. Geluid (WebAudio, geen bestanden nodig; standaard uit) =====
   const Sound = {
     ctx: null,
     ensure() {
@@ -329,9 +319,7 @@
     },
   };
 
-  /* ======================================================================
-   * 7. UI (Shadow DOM zodat site-CSS en onze CSS elkaar niet raken)
-   * ==================================================================== */
+  // ===== 7. UI (Shadow DOM zodat site-CSS en onze CSS elkaar niet raken) =====
   const STYLES = `
     :host{all:initial}
     *{box-sizing:border-box}
@@ -479,39 +467,39 @@
         <div class="root" part="root">
           <div class="grid"></div><div class="glow"></div>
           <div class="gear">
-            <button class="gear-btn" title="Settings" aria-label="Settings">⚙</button>
+            <button class="gear-btn" title="Settings" aria-label="Settings">\u2699</button>
             <div class="menu">
-              <div class="row"><span>🔊 Sound effects</span><button class="sw" data-k="sound" aria-label="Sound"></button></div>
-              <div class="row"><span>⚡ Animation speed</span><select data-k="speed">${speedOpts}</select></div>
-              <button class="btn ghost" data-a="reopen">🔄 Reopen crate</button>
-              <button class="btn ghost" data-a="original">👁 Show original results</button>
+              <div class="row"><span>\ud83d\udd0a Sound effects</span><button class="sw" data-k="sound" aria-label="Sound"></button></div>
+              <div class="row"><span>\u26a1 Animation speed</span><select data-k="speed">${speedOpts}</select></div>
+              <button class="btn ghost" data-a="reopen">\ud83d\udd04 Reopen crate</button>
+              <button class="btn ghost" data-a="original">\ud83d\udc41 Show original results</button>
             </div>
           </div>
           <div class="panel">
             <div class="view v-pick active">
-              <div class="eyebrow">Smartschool · Results</div>
+              <div class="eyebrow">Smartschool \u00b7 Results</div>
               <h1>Choose a crate</h1>
               <p class="sub">Every result is sealed in its own crate. <span class="pick-count"></span></p>
               <div class="list"></div>
-              <div class="actions"><button class="btn ghost" data-a="original">👁 Show original results</button></div>
+              <div class="actions"><button class="btn ghost" data-a="original">\ud83d\udc41 Show original results</button></div>
             </div>
             <div class="view v-locked">
               ${CRATE_SVG}
-              <div class="lock">🔒 SCORE LOCKED</div>
+              <div class="lock">\ud83d\udd12 SCORE LOCKED</div>
               <h1 class="crate-title">Open your crate</h1>
               <p class="sub crate-sub"></p>
               <div class="actions">
                 <button class="btn" data-a="open">Open crate</button>
-                <button class="btn ghost" data-a="back">← All results</button>
+                <button class="btn ghost" data-a="back">\u2190 All results</button>
               </div>
             </div>
             <div class="view v-spin">
               <div class="eyebrow">Opening crate</div>
               <div class="roulette"><div class="strip"></div><div class="marker"></div></div>
-              <div class="status">Rolling…</div>
+              <div class="status">Rolling\u2026</div>
             </div>
             <div class="view v-done">
-              <div class="eyebrow">🎉 Crate opened!</div>
+              <div class="eyebrow">\ud83c\udf89 Crate opened!</div>
               <div class="done-title"></div>
               <div class="score-big"></div>
               <div class="tier"></div>
@@ -519,12 +507,12 @@
               <div class="actions">
                 <button class="btn" data-a="back">Open another crate</button>
                 <button class="btn ghost" data-a="original">Show original results</button>
-                <button class="btn ghost" data-a="reopen">🔄 Reopen crate</button>
+                <button class="btn ghost" data-a="reopen">\ud83d\udd04 Reopen crate</button>
               </div>
             </div>
           </div>
         </div>
-        <button class="fab" data-a="crate">🎁 CRATE</button>`;
+        <button class="fab" data-a="crate">\ud83c\udf81 CRATE</button>`;
       whenBodyReady(() => document.body.appendChild(this.host));
 
       this.root = this.$('.root');
@@ -558,7 +546,7 @@
           const done = this.opened.has(r.id);
           const t = tierFor(r.percent);
           return `<button class="card${done ? ' done' : ''}" data-a="choose" data-i="${i}" style="--c:${done ? t.color : '#8847ff'}">
-            <span class="ico">${done ? '🔓' : '🔒'}</span>
+            <span class="ico">${done ? '\ud83d\udd13' : '\ud83d\udd12'}</span>
             <span class="txt"><b>${esc(r.title)}</b><small>${esc(r.subtitle || (done ? tier(r) : 'Sealed crate'))}</small></span>
             <span class="val">${done ? fmt(r.percent) : '???'}</span>
           </button>`;
@@ -677,13 +665,13 @@
     async open() {
       if (this.state === 'spinning') return;
       if (!this.current) return this.backToList();
-      // Opnieuw uit de pagina lezen, zodat de échte (actuele) score gebruikt wordt.
+      // Opnieuw uit de pagina lezen, zodat de \u00e9chte (actuele) score gebruikt wordt.
       const live = this.rescan().find((r) => r.id === this.current.id);
       const found = live || this.current;
       Sound.ensure();
       this.state = 'spinning';
       this.show('spin');
-      this.$('.status').textContent = 'Rolling…';
+      this.$('.status').textContent = 'Rolling\u2026';
       this.$('.root').style.setProperty('--accent', '#8847ff');
 
       const strip = this.buildStrip(found.percent);
@@ -723,7 +711,7 @@
     finish(percent) {
       const tier = tierFor(percent);
       this.opened.add(this.current.id);
-      this.$('.status').textContent = 'Unboxing…';
+      this.$('.status').textContent = 'Unboxing\u2026';
       const win = this.$('.tile.win');
       win.classList.add('lit');
       this.$('.root').style.setProperty('--accent', tier.color);
@@ -788,9 +776,7 @@
     }
   }
 
-  /* ======================================================================
-   * 8. Boot + SPA-navigatie: UI verschijnt alleen op de Resultaten-pagina
-   * ==================================================================== */
+  // ===== 8. Boot + SPA-navigatie: UI verschijnt alleen op de Resultaten-pagina =====
   /** Klein label linksonder: laat zien dat het script draait en wat het op de pagina vond. */
   function badge(text, ok) {
     let host = document.querySelector('[data-ss-crate-badge]');
@@ -803,7 +789,7 @@
       document.body.appendChild(host);
     }
     const d = host.shadowRoot.querySelector('div');
-    d.textContent = '🎁 Crate Opener: ' + text;
+    d.textContent = '\ud83c\udf81 Crate Opener: ' + text;
     d.style.background = ok ? '#2e9e5b' : '#c2410c';
     d.style.opacity = '1';
     clearTimeout(badge.t);
@@ -816,7 +802,7 @@
 
     start() {
       if (window.top !== window.self) return; // niet in iframes
-      log('v2.2.3 geladen op', location.href);
+      log('v2.2.4 geladen op', location.href);
       Settings.load();
       if (PageGate.urlLooksLikeResults() && !App.ui) PendingGuard.on();
 
